@@ -216,6 +216,23 @@ class CodokenAuth:
         self._email = data.get("email", email)
 
     @staticmethod
+    async def send_signin_link(api_key: str, email: str, continue_url: str) -> None:
+        """Send a passwordless email sign-in link via Firebase Auth REST API."""
+        url = FIREBASE_RESET_URL.format(api_key=api_key)
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(url, json={
+                "requestType": "EMAIL_SIGNIN",
+                "email": email,
+                "continueUrl": continue_url,
+                "canHandleCodeInApp": False,
+            })
+        if r.status_code != 200:
+            err = r.json().get("error", {})
+            raise CodokenAuthError(
+                f"Sign-in link failed: {err.get('message', r.text[:200])}"
+            )
+
+    @staticmethod
     async def send_password_reset(api_key: str, email: str) -> None:
         """Send a password-reset email via Firebase Auth REST API.
         Raises CodokenAuthError if the request fails."""

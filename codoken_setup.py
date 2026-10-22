@@ -132,66 +132,97 @@ async def wizard(defaults: bool) -> None:
             sys.exit(1)
 
     click.echo("\n-- Account --")
-    click.echo("Your email and password identify your node on the network.")
-    click.echo("Credits (earned by workers and validators) are tied to this account.")
-    click.echo("If you don't have an account yet, one will be created for you.")
-    click.echo("Password must be at least 6 characters.\n")
+    click.echo("Your email and a password identify your node on the network.")
+    click.echo("Credits are tied to this account. If you signed up via magic link")
+    click.echo("and have no password yet, just press Enter to skip the password and")
+    click.echo("we'll send you a one-time sign-in link instead.\n")
     email = click.prompt("Email").strip()
-    password = click.prompt("Password", hide_input=True)
+    password = click.prompt("Password (Enter to skip — use sign-in link instead)",
+                            default="", hide_input=True, show_default=False)
 
     click.echo("\nConnecting to Firebase...")
     from codoken_auth import CodokenAuth, CodokenAuthError
 
     auth_store = str(USER_CONFIG.parent / "auth.json")
-    auth = CodokenAuth("worker", auth_store=auth_store, email=email, password=password)
+    auth = CodokenAuth("worker", auth_store=auth_store, email=email, password=password or None)
     auth.mode = "firebase"
     auth._cfg = codoken_auth_load_web_config()
 
-    try:
-        await auth._sign_in_email(api_key, email, password)
-        auth._persist()
-        click.echo(f"  Signed in as {email}  (uid {(auth._uid or '')[:12]}...)")
-    except CodokenAuthError as exc:
-        err_text = str(exc)
-        if "INVALID_LOGIN_CREDENTIALS" in err_text or "INVALID_PASSWORD" in err_text or "WRONG_PASSWORD" in err_text:
-            click.echo(f"\n[ERROR] Wrong password for {email}.")
-            click.echo("  Tip: passwords are case-sensitive. Re-run setup to try again.")
-            click.echo("  Forgot your password? Run:  python codoken_setup.py reset-password")
+    if not password:
+        # Passwordless path — send a sign-in link and poll for the token file
+        click.echo(f"  Sending a sign-in link to {email}...")
+        try:
+            await CodokenAuth.send_signin_link(api_key, email, "https://codoken.io/cli-auth.html")
+        except CodokenAuthError as exc:
+            err = str(exc)
+            if "EMAIL_NOT_FOUND" in err:
+                click.echo(f"\n  No account found for {email}.")
+                click.echo("  If you're new, re-run setup with a password to create an account.")
+            else:
+                click.echo(f"\n[ERROR] Could not send sign-in link: {exc}")
             sys.exit(1)
-        elif "EMAIL_NOT_FOUND" in err_text or "INVALID_EMAIL" in err_text:
-            click.echo(f"  No account found for {email}.")
-            if not click.confirm("  Create a new account with this email and password?", default=True):
-                sys.exit(0)
-            click.echo("  Creating account...")
-            try:
-                result = await CodokenAuth.sign_up(api_key, email, password)
-                auth._token = result["idToken"]
-                auth._refresh_token = result["refreshToken"]
-                auth._uid = result["uid"]
-                auth._email = result["email"]
-                auth._persist()
-                click.echo(f"  Account created!  (uid {(auth._uid or '')[:12]}...)")
-                click.echo("  Your identity is saved to ~/.codoken/auth.json — keep it safe.")
-                click.echo("  If you lose it, sign in again and a new token will be issued.")
-            except CodokenAuthError as e2:
-                err2 = str(e2)
-                if "WEAK_PASSWORD" in err2:
-                    click.echo("\n[ERROR] Password is too weak. Firebase requires at least 6 characters.")
-                elif "EMAIL_EXISTS" in err2:
-                    click.echo(f"\n[ERROR] An account already exists for {email} — the password you entered is incorrect.")
-                    click.echo("  Re-run setup and try again, or:  python codoken_setup.py reset-password")
-                else:
-                    click.echo(f"\n[ERROR] Could not create account: {e2}")
-                sys.exit(1)
-        elif "TOO_MANY_ATTEMPTS" in err_text:
-            click.echo("\n[ERROR] Too many failed sign-in attempts. Try again in a few minutes.")
-            sys.exit(1)
-        elif "WEAK_PASSWORD" in err_text:
-            click.echo("\n[ERROR] Password is too weak. Please use at least 6 characters.")
-            sys.exit(1)
+        click.echo(
+            "\n  A sign-in link has been sent to your inbox.\n"
+            "  Open it in a browser — it will save a token file to ~/.codoken/auth.json.\n"
+            "  Once done, press Enter here to continue setup."
+        )
+        click.pause("")
+        if not (USER_CONFIG.parent / "auth.json").exists():
+            click.echo(
+                "[WARN] ~/.codoken/auth.json not found yet.\n"
+                "  You can finish setup now and the broker connection check will tell\n"
+                "  you whether auth is working. Re-run 'python codoken_setup.py check'\n"
+                "  after clicking the link if you want to verify."
+            )
         else:
-            click.echo(f"\n[ERROR] Authentication failed: {exc}")
-            sys.exit(1)
+            click.echo("  Token found — signed in.")
+    else:
+        try:
+            await auth._sign_in_email(api_key, email, password)
+            auth._persist()
+            click.echo(f"  Signed in as {email}  (uid {(auth._uid or '')[:12]}...)")
+        except CodokenAuthError as exc:
+            err_text = str(exc)
+            if "INVALID_LOGIN_CREDENTIALS" in err_text or "INVALID_PASSWORD" in err_text or "WRONG_PASSWORD" in err_text:
+                click.echo(f"\n[ERROR] Wrong password for {email}.")
+                click.echo("  If you signed up via magic link and have no password, re-run setup")
+                click.echo("  and press Enter when prompted for a password to use a sign-in link.")
+                click.echo("  To set a password: python codoken_setup.py reset-password")
+                sys.exit(1)
+            elif "EMAIL_NOT_FOUND" in err_text or "INVALID_EMAIL" in err_text:
+                click.echo(f"  No account found for {email}.")
+                if not click.confirm("  Create a new account with this email and password?", default=True):
+                    sys.exit(0)
+                click.echo("  Creating account...")
+                try:
+                    result = await CodokenAuth.sign_up(api_key, email, password)
+                    auth._token = result["idToken"]
+                    auth._refresh_token = result["refreshToken"]
+                    auth._uid = result["uid"]
+                    auth._email = result["email"]
+                    auth._persist()
+                    click.echo(f"  Account created!  (uid {(auth._uid or '')[:12]}...)")
+                    click.echo("  Your identity is saved to ~/.codoken/auth.json — keep it safe.")
+                    click.echo("  If you lose it, sign in again and a new token will be issued.")
+                except CodokenAuthError as e2:
+                    err2 = str(e2)
+                    if "WEAK_PASSWORD" in err2:
+                        click.echo("\n[ERROR] Password is too weak. Firebase requires at least 6 characters.")
+                    elif "EMAIL_EXISTS" in err2:
+                        click.echo(f"\n[ERROR] An account already exists for {email} — the password you entered is incorrect.")
+                        click.echo("  Re-run setup and try again, or:  python codoken_setup.py reset-password")
+                    else:
+                        click.echo(f"\n[ERROR] Could not create account: {e2}")
+                    sys.exit(1)
+            elif "TOO_MANY_ATTEMPTS" in err_text:
+                click.echo("\n[ERROR] Too many failed sign-in attempts. Try again in a few minutes.")
+                sys.exit(1)
+            elif "WEAK_PASSWORD" in err_text:
+                click.echo("\n[ERROR] Password is too weak. Please use at least 6 characters.")
+                sys.exit(1)
+            else:
+                click.echo(f"\n[ERROR] Authentication failed: {exc}")
+                sys.exit(1)
 
     # -- Worker: detect LLM backend --
     doc_model = None
