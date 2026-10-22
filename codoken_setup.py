@@ -974,3 +974,7 @@ def logs_cmd(role: str | None, lines: int) -> None:
                 click.echo(result.stdout, nl=False)
             except Exception as exc:
                 click.echo(f"[WARN] Could not read {f}: {exc}")
+
+
+if __name__ == '__main__':
+    main()
