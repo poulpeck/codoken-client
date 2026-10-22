@@ -153,11 +153,14 @@ async def wizard(defaults: bool) -> None:
         click.echo(f"  Signed in as {email}  (uid {(auth._uid or '')[:12]}...)")
     except CodokenAuthError as exc:
         err_text = str(exc)
-        if "EMAIL_NOT_FOUND" in err_text or "INVALID_EMAIL" in err_text or "INVALID_LOGIN_CREDENTIALS" in err_text:
-            click.echo(f"  No account found for {email}, or the password is incorrect.")
+        if "INVALID_LOGIN_CREDENTIALS" in err_text or "INVALID_PASSWORD" in err_text or "WRONG_PASSWORD" in err_text:
+            click.echo(f"\n[ERROR] Wrong password for {email}.")
+            click.echo("  Tip: passwords are case-sensitive. Re-run setup to try again.")
+            click.echo("  Forgot your password? Run:  python codoken_setup.py reset-password")
+            sys.exit(1)
+        elif "EMAIL_NOT_FOUND" in err_text or "INVALID_EMAIL" in err_text:
+            click.echo(f"  No account found for {email}.")
             if not click.confirm("  Create a new account with this email and password?", default=True):
-                click.echo("  If you already have an account, check your password and try again.")
-                click.echo("  Forgot your password? Run:  python setup.py reset-password")
                 sys.exit(0)
             click.echo("  Creating account...")
             try:
@@ -176,15 +179,10 @@ async def wizard(defaults: bool) -> None:
                     click.echo("\n[ERROR] Password is too weak. Firebase requires at least 6 characters.")
                 elif "EMAIL_EXISTS" in err2:
                     click.echo(f"\n[ERROR] An account already exists for {email} — the password you entered is incorrect.")
-                    click.echo("  Re-run setup and try again, or:  python setup.py reset-password")
+                    click.echo("  Re-run setup and try again, or:  python codoken_setup.py reset-password")
                 else:
                     click.echo(f"\n[ERROR] Could not create account: {e2}")
                 sys.exit(1)
-        elif "INVALID_PASSWORD" in err_text or "WRONG_PASSWORD" in err_text:
-            click.echo(f"\n[ERROR] Wrong password for {email}.")
-            click.echo("  Tip: passwords are case-sensitive. Re-run setup to try again.")
-            click.echo("  Forgot your password? Run:  python setup.py reset-password")
-            sys.exit(1)
         elif "TOO_MANY_ATTEMPTS" in err_text:
             click.echo("\n[ERROR] Too many failed sign-in attempts. Try again in a few minutes.")
             sys.exit(1)
