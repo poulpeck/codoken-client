@@ -25,10 +25,15 @@ import asyncio
 import importlib.util
 import json
 import os
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Optional
 
@@ -76,6 +81,104 @@ def _web_config_api_key() -> Optional[str]:
     import codoken_auth
     cfg = codoken_auth._load_web_config()
     return cfg["apiKey"] if cfg else None
+
+
+CLI_AUTH_URL = "https://codoken.io/cli-auth.html"
+_AUTH_TIMEOUT = 120  # seconds to wait for browser callback
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+async def _browser_auth() -> dict:
+    """
+    Open cli-auth.html in the browser, spin up a localhost HTTP server to receive
+    the Firebase token, return {"idToken", "refreshToken", "uid", "email"}.
+    Falls back to manual token paste if the browser can't be opened or times out.
+    """
+    port  = _free_port()
+    nonce = secrets.token_urlsafe(16)
+    url   = f"{CLI_AUTH_URL}?port={port}&nonce={nonce}"
+
+    result: dict = {}
+    event = threading.Event()
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass  # silence request logs
+
+        def do_POST(self):
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body   = self.rfile.read(length)
+                data   = json.loads(body)
+            except Exception:
+                self.send_response(400); self.end_headers()
+                return
+            if data.get('nonce') != nonce:
+                self.send_response(403); self.end_headers()
+                return
+            result.update(data)
+            # CORS: the page is on codoken.io, server is localhost
+            self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', 'https://codoken.io')
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            event.set()
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header('Access-Control-Allow-Origin', 'https://codoken.io')
+            self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+
+    server = HTTPServer(('127.0.0.1', port), _Handler)
+    server.timeout = 1  # unblock serve_forever polling
+
+    def _serve():
+        while not event.is_set():
+            server.handle_request()
+        server.server_close()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+
+    opened = webbrowser.open(url)
+    if opened:
+        click.echo(f"  Opening browser → {CLI_AUTH_URL}")
+        click.echo("  Sign in with Google or email, then return here.")
+    else:
+        click.echo(f"  Could not open browser automatically.")
+        click.echo(f"  Open this URL manually:\n\n    {url}\n")
+
+    # Wait up to _AUTH_TIMEOUT seconds
+    click.echo(f"  Waiting for sign-in (timeout {_AUTH_TIMEOUT}s)…", nl=False)
+    waited = 0
+    while not event.is_set() and waited < _AUTH_TIMEOUT:
+        await asyncio.sleep(1)
+        waited += 1
+        if waited % 10 == 0:
+            click.echo(".", nl=False)
+    click.echo("")
+
+    if not result:
+        # Timeout — offer manual paste fallback
+        click.echo(
+            "\n  Timed out waiting for browser.\n"
+            f"  Open this URL and sign in, then paste the token shown on the page:\n\n"
+            f"    {CLI_AUTH_URL}\n"
+        )
+        id_token = click.prompt("  Paste ID token").strip()
+        if not id_token:
+            click.echo("[ERROR] No token provided.")
+            sys.exit(1)
+        result = {"idToken": id_token, "refreshToken": "", "uid": "", "email": ""}
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -132,97 +235,34 @@ async def wizard(defaults: bool) -> None:
             sys.exit(1)
 
     click.echo("\n-- Account --")
-    click.echo("Your email and a password identify your node on the network.")
-    click.echo("Credits are tied to this account. If you signed up via magic link")
-    click.echo("and have no password yet, just press Enter to skip the password and")
-    click.echo("we'll send you a one-time sign-in link instead.\n")
-    email = click.prompt("Email").strip()
-    password = click.prompt("Password (Enter to skip — use sign-in link instead)",
-                            default="", hide_input=True, show_default=False)
+    click.echo("Sign in with your Codoken account (Google, email link, or email + password).")
+    click.echo("Your credits and identity are tied to this account.\n")
 
-    click.echo("\nConnecting to Firebase...")
     from codoken_auth import CodokenAuth, CodokenAuthError
 
-    auth_store = str(USER_CONFIG.parent / "auth.json")
-    auth = CodokenAuth("worker", auth_store=auth_store, email=email, password=password or None)
-    auth.mode = "firebase"
-    auth._cfg = codoken_auth_load_web_config()
+    token_data = await _browser_auth()
 
-    if not password:
-        # Passwordless path — send a sign-in link and poll for the token file
-        click.echo(f"  Sending a sign-in link to {email}...")
-        try:
-            await CodokenAuth.send_signin_link(api_key, email, "https://codoken.io/cli-auth.html")
-        except CodokenAuthError as exc:
-            err = str(exc)
-            if "EMAIL_NOT_FOUND" in err:
-                click.echo(f"\n  No account found for {email}.")
-                click.echo("  If you're new, re-run setup with a password to create an account.")
-            else:
-                click.echo(f"\n[ERROR] Could not send sign-in link: {exc}")
-            sys.exit(1)
-        click.echo(
-            "\n  A sign-in link has been sent to your inbox.\n"
-            "  Open it in a browser — it will save a token file to ~/.codoken/auth.json.\n"
-            "  Once done, press Enter here to continue setup."
-        )
-        click.pause("")
-        if not (USER_CONFIG.parent / "auth.json").exists():
-            click.echo(
-                "[WARN] ~/.codoken/auth.json not found yet.\n"
-                "  You can finish setup now and the broker connection check will tell\n"
-                "  you whether auth is working. Re-run 'python codoken_setup.py check'\n"
-                "  after clicking the link if you want to verify."
-            )
-        else:
-            click.echo("  Token found — signed in.")
-    else:
-        try:
-            await auth._sign_in_email(api_key, email, password)
-            auth._persist()
-            click.echo(f"  Signed in as {email}  (uid {(auth._uid or '')[:12]}...)")
-        except CodokenAuthError as exc:
-            err_text = str(exc)
-            if "INVALID_LOGIN_CREDENTIALS" in err_text or "INVALID_PASSWORD" in err_text or "WRONG_PASSWORD" in err_text:
-                click.echo(f"\n[ERROR] Wrong password for {email}.")
-                click.echo("  If you signed up via magic link and have no password, re-run setup")
-                click.echo("  and press Enter when prompted for a password to use a sign-in link.")
-                click.echo("  To set a password: python codoken_setup.py reset-password")
-                sys.exit(1)
-            elif "EMAIL_NOT_FOUND" in err_text or "INVALID_EMAIL" in err_text:
-                click.echo(f"  No account found for {email}.")
-                if not click.confirm("  Create a new account with this email and password?", default=True):
-                    sys.exit(0)
-                click.echo("  Creating account...")
-                try:
-                    result = await CodokenAuth.sign_up(api_key, email, password)
-                    auth._token = result["idToken"]
-                    auth._refresh_token = result["refreshToken"]
-                    auth._uid = result["uid"]
-                    auth._email = result["email"]
-                    auth._persist()
-                    click.echo(f"  Account created!  (uid {(auth._uid or '')[:12]}...)")
-                    click.echo("  Your identity is saved to ~/.codoken/auth.json — keep it safe.")
-                    click.echo("  If you lose it, sign in again and a new token will be issued.")
-                except CodokenAuthError as e2:
-                    err2 = str(e2)
-                    if "WEAK_PASSWORD" in err2:
-                        click.echo("\n[ERROR] Password is too weak. Firebase requires at least 6 characters.")
-                    elif "EMAIL_EXISTS" in err2:
-                        click.echo(f"\n[ERROR] An account already exists for {email} — the password you entered is incorrect.")
-                        click.echo("  Re-run setup and try again, or:  python codoken_setup.py reset-password")
-                    else:
-                        click.echo(f"\n[ERROR] Could not create account: {e2}")
-                    sys.exit(1)
-            elif "TOO_MANY_ATTEMPTS" in err_text:
-                click.echo("\n[ERROR] Too many failed sign-in attempts. Try again in a few minutes.")
-                sys.exit(1)
-            elif "WEAK_PASSWORD" in err_text:
-                click.echo("\n[ERROR] Password is too weak. Please use at least 6 characters.")
-                sys.exit(1)
-            else:
-                click.echo(f"\n[ERROR] Authentication failed: {exc}")
-                sys.exit(1)
+    # Persist the token to ~/.codoken/auth.json
+    USER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    auth_path = USER_CONFIG.parent / "auth.json"
+    auth_record = {
+        "mode":          "firebase",
+        "token":         token_data.get("idToken", ""),
+        "refresh_token": token_data.get("refreshToken", ""),
+        "uid":           token_data.get("uid", ""),
+        "email":         token_data.get("email", ""),
+    }
+    with open(auth_path, "w", encoding="utf-8") as fh:
+        json.dump(auth_record, fh, indent=2)
+        fh.write("\n")
+    try:
+        os.chmod(auth_path, 0o600)
+    except OSError:
+        pass
+
+    uid_preview = (token_data.get("uid") or "")[:12]
+    email_label = token_data.get("email") or token_data.get("uid") or "unknown"
+    click.echo(f"  Signed in as {email_label}  (uid {uid_preview}…)  ✓")
 
     # -- Worker: detect LLM backend --
     doc_model = None
