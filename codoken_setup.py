@@ -458,26 +458,46 @@ async def wizard(defaults: bool) -> None:
     click.echo("")
     click.echo("Background service: if installed, your node starts automatically")
     click.echo("on login and restarts itself if it crashes.")
-    if click.confirm("Install as a background service?", default=False):
+    service_installed = False
+    if click.confirm("Install as a background service? (recommended)", default=True):
         await _service_install(roles, doc)
+        service_installed = True
     else:
-        click.echo("  Skipped. You can install it later with:  python setup.py service install")
+        click.echo("  Skipped. You can install it later with:  python codoken_setup.py service install")
 
-    # -- Final summary --
-    click.echo("\n=== Setup complete ===\n")
-    if sys.platform == "win32":
-        set_env = "set CODOKEN_AUTH=firebase &&"
+    # -- Congratulations --
+    click.echo("")
+    click.echo("=" * 60)
+    click.echo("")
+    click.echo("  Congratulations — your node is ready!")
+    click.echo("")
+    click.echo("  Welcome to the Codoken local agent coding community.")
+    click.echo("  Your machine is now part of a peer-to-peer network of")
+    click.echo("  developers and contributors running local AI to generate")
+    click.echo("  and verify real code, earning credits for every task.")
+    click.echo("")
+    if service_installed:
+        click.echo("  Your node will start automatically on login.")
+        click.echo("  Sit back — credits will accumulate while you work.")
     else:
-        set_env = "CODOKEN_AUTH=firebase"
-    click.echo("To start your node(s) manually:")
-    if "worker" in roles:
-        click.echo(f"  {set_env} python worker.py")
-    if "validator" in roles:
-        click.echo(f"  {set_env} python validator.py")
-    click.echo("\nUseful commands:")
-    click.echo("  python setup.py check              — verify everything is working")
-    click.echo("  python setup.py service install    — install background auto-start")
-    click.echo("  python setup.py                    — re-run this wizard")
+        click.echo("  Start your node manually when you're ready:")
+        if sys.platform == "win32":
+            set_env = "set CODOKEN_AUTH=firebase &&"
+        else:
+            set_env = "CODOKEN_AUTH=firebase"
+        if "worker" in roles:
+            click.echo(f"    {set_env} python worker.py")
+        if "validator" in roles:
+            click.echo(f"    {set_env} python validator.py")
+    click.echo("")
+    click.echo("  Track your earnings:   https://codoken.io/dashboard.html")
+    click.echo("  Useful commands:")
+    click.echo("    python codoken_setup.py check            — verify everything")
+    click.echo("    python codoken_setup.py service install  — set up auto-start")
+    click.echo("    python codoken_setup.py                  — re-run this wizard")
+    click.echo("")
+    click.echo("=" * 60)
+    click.echo("")
 
 
 def codoken_auth_load_web_config():
