@@ -2,12 +2,12 @@
 Codoken setup — onboarding wizard and stack doctor.
 
 Usage:
-    python setup.py                   interactive onboarding wizard
-    python setup.py --defaults        non-interactive: write current effective values
-    python setup.py check             doctor: packages, broker, auth, LLM, container engine
-    python setup.py print-env         shell export lines for the effective values (CI / .zshrc)
-    python setup.py service install   install a launchd (macOS) or systemd (Linux) service
-    python setup.py service uninstall remove the service
+    python codoken_setup.py                   interactive onboarding wizard
+    python codoken_setup.py --defaults        non-interactive: write current effective values
+    python codoken_setup.py check             doctor: packages, broker, auth, LLM, container engine
+    python codoken_setup.py print-env         shell export lines for the effective values (CI / .zshrc)
+    python codoken_setup.py service install   install a launchd (macOS) or systemd (Linux) service
+    python codoken_setup.py service uninstall remove the service
 
 The wizard:
   1. Asks which role(s) to run: worker, validator, or both
@@ -362,7 +362,7 @@ async def wizard(defaults: bool) -> None:
                 )
             click.echo(
                 "  The validator will fail to run tasks until a container engine is\n"
-                "  running. Start it and then re-run:  python setup.py check"
+                "  running. Start it and then re-run:  python codoken_setup.py check"
             )
         else:
             click.echo(
@@ -979,7 +979,7 @@ async def _reset_password(email: str | None) -> None:
     if not api_key:
         click.echo(
             "[ERROR] firebase-web-config.json not found.\n"
-            "Run the setup wizard first:  python setup.py"
+            "Run the setup wizard first:  python codoken_setup.py"
         )
         sys.exit(1)
 
@@ -990,7 +990,7 @@ async def _reset_password(email: str | None) -> None:
     try:
         await CodokenAuth.send_password_reset(api_key, email)
         click.echo("  Done. Check your inbox (and spam folder) for a reset link.")
-        click.echo("  After resetting, re-run:  python setup.py")
+        click.echo("  After resetting, re-run:  python codoken_setup.py")
     except CodokenAuthError as exc:
         err = str(exc)
         if "EMAIL_NOT_FOUND" in err:
