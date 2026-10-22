@@ -1,0 +1,19 @@
+# PHP factorial task.
+# Submit with:  CODOKEN_AUTH=firebase python developer.py submit manifests/factorial_php.yaml
+task_id: task_factorial_php
+manifest:
+  version: "1.0"
+  environment:
+    language: php
+  worker_payload:
+    prompt: |
+      Write a pure PHP function named `factorial(int $n): int` that returns
+      n! (factorial of n). Handle n=0 returning 1.
+      Return only the function definition, no opening <?php tag, no other code.
+  validator_payload:
+    test_code: |
+      assert(factorial(0) === 1, "factorial(0)");
+      assert(factorial(1) === 1, "factorial(1)");
+      assert(factorial(5) === 120, "factorial(5)");
+      assert(factorial(10) === 3628800, "factorial(10)");
+      echo "ALL TESTS PASSED\n";

@@ -1,0 +1,28 @@
+# Java factorial task.
+# Submit with:  CODOKEN_AUTH=firebase python developer.py submit manifests/factorial_java.yaml
+#
+# Java uses two files: Solution.java (generated code) and Test.java (test harness).
+# The Solution class must be named exactly Solution.
+task_id: task_factorial_java
+manifest:
+  version: "1.0"
+  environment:
+    language: java
+  worker_payload:
+    prompt: |
+      Write a Java class named Solution with a single public static method:
+        public static long factorial(int n)
+      that returns n! (factorial of n). Handle n=0 returning 1.
+      The class must be named exactly Solution. Return only the class
+      definition, no package declaration, no imports.
+  validator_payload:
+    test_code: |
+      class Test {
+          public static void main(String[] args) {
+              assert Solution.factorial(0) == 1L : "factorial(0)";
+              assert Solution.factorial(1) == 1L : "factorial(1)";
+              assert Solution.factorial(5) == 120L : "factorial(5)";
+              assert Solution.factorial(10) == 3628800L : "factorial(10)";
+              System.out.println("ALL TESTS PASSED");
+          }
+      }

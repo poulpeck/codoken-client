@@ -1,0 +1,32 @@
+# Example: C++ GCD task (the original devnet demo, now as a file).
+# Submit with:  python developer.py submit manifests/gcd.yaml
+# task_id defaults to "task_gcd" (the file stem); override with --task-id or
+# set it below.
+task_id: task_gcd
+manifest:
+  version: "1.0"
+  environment:
+    language: cpp
+    runtime_version: cpp17
+  worker_payload:
+    prompt: |
+      Write a pure, side-effect-free C++ function named `compute_gcd` that
+      takes two integers (int a, int b) and returns their greatest common
+      divisor as an int. Handle zero inputs sensibly (gcd(0, n) == abs(n)).
+      Return only the function definition, no main(), no headers.
+  validator_payload:
+    test_code: |
+      #include <iostream>
+      #include <cassert>
+
+      int compute_gcd(int a, int b);
+
+      int main() {
+          assert(compute_gcd(54, 24) == 6);
+          assert(compute_gcd(48, 18) == 6);
+          assert(compute_gcd(7, 13) == 1);
+          assert(compute_gcd(0, 5) == 5);
+          assert(compute_gcd(5, 0) == 5);
+          std::cout << "ALL TESTS PASSED" << std::endl;
+          return 0;
+      }

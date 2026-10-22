@@ -1,0 +1,19 @@
+# Ruby factorial task.
+# Submit with:  CODOKEN_AUTH=firebase python developer.py submit manifests/factorial_rb.yaml
+task_id: task_factorial_rb
+manifest:
+  version: "1.0"
+  environment:
+    language: ruby
+  worker_payload:
+    prompt: |
+      Write a pure Ruby method named `factorial(n)` that returns n! (factorial
+      of n). Handle n=0 returning 1.
+      Return only the method definition, no other code.
+  validator_payload:
+    test_code: |
+      raise "factorial(0)" unless factorial(0) == 1
+      raise "factorial(1)" unless factorial(1) == 1
+      raise "factorial(5)" unless factorial(5) == 120
+      raise "factorial(10)" unless factorial(10) == 3628800
+      puts "ALL TESTS PASSED"

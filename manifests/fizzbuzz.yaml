@@ -1,0 +1,29 @@
+# Example: Python FizzBuzz task.
+# Submit with:  python developer.py submit manifests/fizzbuzz.yaml
+task_id: task_fizzbuzz
+manifest:
+  version: "1.0"
+  environment:
+    language: python
+    runtime_version: "3.11"
+  worker_payload:
+    prompt: |
+      Write a pure, side-effect-free Python function named `fizzbuzz(n: int)
+      -> str` that returns "Fizz" when n is divisible by 3, "Buzz" when
+      divisible by 5, "FizzBuzz" when divisible by both, and the string of
+      n otherwise. Return only the function definition, no imports, no other
+      code.
+  validator_payload:
+    # The broker concatenates generated code and this test into one file
+    # (solution.py) and runs it, so the test must reference the function
+    # directly, not import it from a module.
+    test_code: |
+      assert fizzbuzz(3) == "Fizz"
+      assert fizzbuzz(5) == "Buzz"
+      assert fizzbuzz(15) == "FizzBuzz"
+      assert fizzbuzz(7) == "7"
+      assert fizzbuzz(21) == "Fizz"
+      assert fizzbuzz(55) == "Buzz"
+      assert fizzbuzz(30) == "FizzBuzz"
+      assert fizzbuzz(1) == "1"
+      print("ALL TESTS PASSED")

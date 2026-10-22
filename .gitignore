@@ -1,0 +1,12 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+*.zip
+
+# Auth tokens — never commit these
+.codoken/
+.codoken_auth*.json
+firebase-credentials.json
+firebase-web-config.json

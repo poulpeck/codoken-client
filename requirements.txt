@@ -1,0 +1,28 @@
+# Codoken — full dependency set (one venv serves every component on the devnet)
+
+# Broker (GCP VM; keep light — the only always-on server)
+fastapi
+uvicorn
+websockets
+
+# Developer CLI
+click
+PyYAML
+
+# Worker node (local LLM discovery + calls)
+httpx
+openai
+
+# Validator node (container sandbox)
+docker
+
+# ---- Firebase (the auth + database round) ----
+# Broker side: verify client ID tokens + Firestore persistence.
+# Only needed when CODOKEN_AUTH=firebase / CODOKEN_PERSIST=firestore.
+firebase-admin
+
+# Client side (worker/validator/developer): anonymous sign-in -> ID token
+# via Firebase Auth REST API (no SDK — httpx is already a dependency above).
+
+# MCP server (codoken_mcp.py — exposes Codoken as tools for AI agents)
+mcp

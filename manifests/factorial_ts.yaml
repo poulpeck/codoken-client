@@ -1,0 +1,20 @@
+# TypeScript factorial task.
+# Submit with:  CODOKEN_AUTH=firebase python developer.py submit manifests/factorial_ts.yaml
+task_id: task_factorial_ts
+manifest:
+  version: "1.0"
+  environment:
+    language: typescript
+  worker_payload:
+    prompt: |
+      Write a pure TypeScript function named `factorial(n: number): number`
+      that returns n! (factorial of n). Handle n=0 returning 1.
+      Return only the function definition, no imports, no other code.
+  validator_payload:
+    test_code: |
+      const assert = (cond: boolean, msg: string) => { if (!cond) throw new Error(msg); };
+      assert(factorial(0) === 1, "factorial(0)");
+      assert(factorial(1) === 1, "factorial(1)");
+      assert(factorial(5) === 120, "factorial(5)");
+      assert(factorial(10) === 3628800, "factorial(10)");
+      console.log("ALL TESTS PASSED");

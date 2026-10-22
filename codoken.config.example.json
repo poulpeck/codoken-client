@@ -1,0 +1,10 @@
+{
+  "broker": "ws://127.0.0.1:9000",
+  "auth": "shared_secret",
+  "persist": "off",
+  "firebase_credentials": "firebase-credentials.json",
+  "firebase_web_config": "firebase-web-config.json",
+  "auth_store": ".codoken_auth.json",
+  "worker_parallel": "2",
+  "docker_host": ""
+}

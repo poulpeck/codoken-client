@@ -1,0 +1,58 @@
+# Example: a two-atom workload (spec §2) — one manifest, two independent
+# atoms, each with its own language, prompt and test. The atoms dispatch in
+# parallel, review in sequence, and the task only resolves when BOTH atoms
+# have verdicts (APPROVED only if every atom approved).
+#
+# Submit with:  python developer.py submit manifests/gcd_fib.yaml
+# Track with:   python developer.py status task_gcd_fib
+#
+# A manifest WITHOUT an "atoms" key is the legacy single-atom workload
+# (the top-level environment/worker_payload/validator_payload ARE the atom).
+# With "atoms", per-atom values win and top-level values are inherited.
+task_id: task_gcd_fib
+manifest:
+  version: "1.0"
+  atoms:
+    - id: gcd
+      environment:
+        language: cpp
+        runtime_version: cpp17
+      worker_payload:
+        prompt: |
+          Write a pure, side-effect-free C++ function named `compute_gcd` that
+          takes two integers (int a, int b) and returns their greatest common
+          divisor as an int. Handle zero inputs sensibly (gcd(0, n) == abs(n)).
+          Return only the function definition, no main(), no headers.
+      validator_payload:
+        test_code: |
+          #include <iostream>
+          #include <cassert>
+
+          int compute_gcd(int a, int b);
+
+          int main() {
+              assert(compute_gcd(54, 24) == 6);
+              assert(compute_gcd(48, 18) == 6);
+              assert(compute_gcd(7, 13) == 1);
+              std::cout << "ALL TESTS PASSED" << std::endl;
+              return 0;
+          }
+    - id: fib
+      environment:
+        language: python
+        runtime_version: "3.11"
+      worker_payload:
+        prompt: |
+          Write a pure, side-effect-free Python function named `fib` that
+          takes n (int, n >= 0) and returns the nth Fibonacci number
+          (fib(0) == 0, fib(1) == 1). Iterative, not recursive. Return only
+          the function definition, no imports, no __main__ block.
+      validator_payload:
+        test_code: |
+          def fib(n):
+              raise NotImplementedError  # replaced by the generated code
+
+          assert fib(0) == 0
+          assert fib(1) == 1
+          assert fib(10) == 55
+          print("ALL TESTS PASSED")

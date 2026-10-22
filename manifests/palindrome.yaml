@@ -1,0 +1,24 @@
+# Example: JavaScript palindrome task.
+# Submit with:  python developer.py submit manifests/palindrome.yaml
+task_id: task_palindrome
+manifest:
+  version: "1.0"
+  environment:
+    language: javascript
+    runtime_version: "18"
+  worker_payload:
+    prompt: |
+      Write a pure, side-effect-free JavaScript function named
+      `isPalindrome(s)` that returns true when the string s reads the same
+      forwards and backwards, ignoring case, spaces and punctuation. Return
+      only the function definition, no other code.
+  validator_payload:
+    # Generated code and this test are concatenated into one file
+    # (solution.js) and run with node.
+    test_code: |
+      const assert = require("assert");
+      assert.strictEqual(isPalindrome("racecar"), true);
+      assert.strictEqual(isPalindrome("A man, a plan, a canal: Panama"), true);
+      assert.strictEqual(isPalindrome("hello"), false);
+      assert.strictEqual(isPalindrome(""), true);
+      console.log("ALL TESTS PASSED");
