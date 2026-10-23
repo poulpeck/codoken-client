@@ -39,12 +39,9 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 # ---------------------------------------------------------------------------
-# Supported languages (mirrors validator RUNTIME_CONFIG)
+# Supported languages (canonical list lives in codoken_config)
 # ---------------------------------------------------------------------------
-SUPPORTED_LANGUAGES = [
-    "python", "javascript", "typescript", "golang", "rust",
-    "cpp", "php", "ruby", "java",
-]
+from codoken_config import SUPPORTED_LANGUAGES
 
 # ---------------------------------------------------------------------------
 # Broker connection helpers

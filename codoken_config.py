@@ -45,6 +45,13 @@ CONFIG_FILE = "config.json"
 
 ROLES = ("broker", "worker", "validator", "developer")
 
+# Languages supported by the validator container network.
+# Must stay in sync with validator.py RUNTIME_CONFIG + LANGUAGE_ALIASES.
+SUPPORTED_LANGUAGES: tuple[str, ...] = (
+    "python", "javascript", "typescript", "golang", "go",
+    "rust", "cpp", "php", "ruby", "java",
+)
+
 # key -> (environment variable, built-in default or None, roles that use it)
 KEYS: Dict[str, tuple] = {
     "broker": ("CODOKEN_BROKER_WS", "wss://broker.codoken.dev",
