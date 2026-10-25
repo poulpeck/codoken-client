@@ -542,7 +542,8 @@ async def _test_broker_connection() -> float:
     """Connect to the broker as developer, receive the welcome message, return balance."""
     import websockets as _ws
     from codoken_auth import CodokenAuth, CodokenAuthError
-    auth = CodokenAuth("developer")
+    auth_store = str(USER_CONFIG.parent / "auth.json")
+    auth = CodokenAuth("developer", auth_store=auth_store)
     uri, headers = await auth.connect_config()
     async with _ws.connect(uri, additional_headers=headers, open_timeout=10) as ws:
         import asyncio as _asyncio
