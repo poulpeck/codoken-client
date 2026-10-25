@@ -242,16 +242,19 @@ async def wizard(defaults: bool) -> None:
 
     token_data = await _browser_auth()
 
-    # Persist the token to ~/.codoken/auth.json
+    # Persist the token to ~/.codoken/auth.json in the role-keyed format
+    # that CodokenAuth._load_persisted() expects: {role: {uid, id_token, refresh_token}}
     USER_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     auth_path = USER_CONFIG.parent / "auth.json"
-    auth_record = {
-        "mode":          "firebase",
-        "token":         token_data.get("idToken", ""),
-        "refresh_token": token_data.get("refreshToken", ""),
+    role_entry = {
         "uid":           token_data.get("uid", ""),
+        "id_token":      token_data.get("idToken", ""),
+        "refresh_token": token_data.get("refreshToken", ""),
         "email":         token_data.get("email", ""),
+        "saved_at":      __import__("time").time(),
     }
+    # Write the same entry for all roles so worker/validator/developer all find it
+    auth_record = {role: role_entry for role in ("worker", "validator", "developer")}
     with open(auth_path, "w", encoding="utf-8") as fh:
         json.dump(auth_record, fh, indent=2)
         fh.write("\n")
@@ -543,8 +546,8 @@ async def _test_broker_connection() -> float:
     import websockets as _ws
     from codoken_auth import CodokenAuth, CodokenAuthError
     auth_store = str(USER_CONFIG.parent / "auth.json")
-    # Ensure firebase mode even if CODOKEN_AUTH isn't set in the current env
-    os.environ.setdefault("CODOKEN_AUTH", "firebase")
+    os.environ["CODOKEN_AUTH"] = "firebase"
+    os.environ["CODOKEN_AUTH_STORE"] = auth_store
     auth = CodokenAuth("developer", auth_store=auth_store)
     uri, headers = await auth.connect_config()
     async with _ws.connect(uri, additional_headers=headers, open_timeout=10) as ws:
