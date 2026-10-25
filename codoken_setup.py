@@ -476,7 +476,7 @@ async def wizard(defaults: bool) -> None:
         click.echo("  Skipped. You can install it later with:  python codoken_setup.py service install")
 
     # -- Test broker connection + trigger welcome bonus --
-    auth_mode = os.environ.get("CODOKEN_AUTH", "shared_secret").lower()
+    auth_mode = (os.environ.get("CODOKEN_AUTH") or codoken_config.effective("auth") or "shared_secret").lower()
     if auth_mode == "firebase":
         click.echo("")
         click.echo("  Testing broker connection…", nl=False)
