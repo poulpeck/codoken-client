@@ -380,46 +380,60 @@ async def wizard(defaults: bool) -> None:
                 f"  drive listed under Settings -> Resources -> File Sharing,\n"
                 f"  otherwise sandbox volume mounts will fail."
             ) if sys.platform == "win32" else None
-            pull = click.confirm(
-                f"\n  Pull the {len(RUNTIME_IMAGES)} required runtime images now?\n"
-                f"  (~2 GB total, one-time download — tasks run faster after this)",
-                default=True,
-            )
-            if pull:
-                click.echo("  Pulling images (this may take several minutes on a slow connection)...")
-                for image in RUNTIME_IMAGES:
-                    click.echo(f"    {image} ...", nl=False)
-                    try:
-                        subprocess.run([engine, "pull", image], check=True, timeout=300,
-                                       capture_output=True)
-                        click.echo(" done")
-                    except Exception as e:
-                        click.echo(f" FAILED ({e})")
-                        click.echo(f"    Retry manually: {engine} pull {image}")
-                # Build custom images
-                for tag, spec in RUNTIME_BUILD_IMAGES.items():
-                    click.echo(f"    {tag} (building from {spec['base']}) ...", nl=False)
-                    dockerfile = f"FROM {spec['base']}\nRUN npm install -g ts-node typescript @types/node --silent\n"
-                    try:
-                        import tempfile as _tmp, os as _os
-                        with _tmp.TemporaryDirectory() as dctx:
-                            df_path = _os.path.join(dctx, "Dockerfile")
-                            with open(df_path, "w") as df:
-                                df.write(dockerfile)
-                            subprocess.run(
-                                [engine, "build", "-t", tag, dctx],
-                                check=True, timeout=300, capture_output=True,
-                            )
-                        click.echo(" done")
-                    except Exception as e:
-                        click.echo(f" FAILED ({e})")
-                        click.echo(f"    The validator will retry building it on first start.")
+
+            # Check which images are already present
+            missing_pulls = []
+            for image in RUNTIME_IMAGES:
+                result = subprocess.run([engine, "image", "inspect", image],
+                                        capture_output=True)
+                if result.returncode != 0:
+                    missing_pulls.append(image)
+            missing_builds = {tag: spec for tag, spec in RUNTIME_BUILD_IMAGES.items()
+                              if subprocess.run([engine, "image", "inspect", tag],
+                                                capture_output=True).returncode != 0}
+
+            if not missing_pulls and not missing_builds:
+                click.echo("  Runtime images already present  ✓")
             else:
-                click.echo(
-                    "  Skipped. Images will be pulled on demand when the first task\n"
-                    "  arrives, which will make that task slow. Pull them later with:\n"
-                    + "".join(f"    {engine} pull {img}\n" for img in RUNTIME_IMAGES)
+                pull = click.confirm(
+                    f"\n  Pull {len(missing_pulls + list(missing_builds))} missing runtime image(s) now?\n"
+                    f"  (one-time download — tasks run faster after this)",
+                    default=True,
                 )
+                if pull:
+                    click.echo("  Pulling images (this may take several minutes on a slow connection)...")
+                    for image in missing_pulls:
+                        click.echo(f"    {image} ...", nl=False)
+                        try:
+                            subprocess.run([engine, "pull", image], check=True, timeout=300,
+                                           capture_output=True)
+                            click.echo(" done")
+                        except Exception as e:
+                            click.echo(f" FAILED ({e})")
+                            click.echo(f"    Retry manually: {engine} pull {image}")
+                    for tag, spec in missing_builds.items():
+                        click.echo(f"    {tag} (building from {spec['base']}) ...", nl=False)
+                        dockerfile = f"FROM {spec['base']}\nRUN npm install -g ts-node typescript @types/node --silent\n"
+                        try:
+                            import tempfile as _tmp, os as _os
+                            with _tmp.TemporaryDirectory() as dctx:
+                                df_path = _os.path.join(dctx, "Dockerfile")
+                                with open(df_path, "w") as df:
+                                    df.write(dockerfile)
+                                subprocess.run(
+                                    [engine, "build", "-t", tag, dctx],
+                                    check=True, timeout=300, capture_output=True,
+                                )
+                            click.echo(" done")
+                        except Exception as e:
+                            click.echo(f" FAILED ({e})")
+                            click.echo(f"    The validator will retry building it on first start.")
+                else:
+                    click.echo(
+                        "  Skipped. Images will be pulled on demand when the first task\n"
+                        "  arrives, which will make that task slow. Pull them later with:\n"
+                        + "".join(f"    {engine} pull {img}\n" for img in missing_pulls)
+                    )
 
     # -- Write config --
     click.echo("\nWriting configuration...")
