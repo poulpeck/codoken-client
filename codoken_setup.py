@@ -475,6 +475,17 @@ async def wizard(defaults: bool) -> None:
     else:
         click.echo("  Skipped. You can install it later with:  python codoken_setup.py service install")
 
+    # -- Test broker connection + trigger welcome bonus --
+    auth_mode = os.environ.get("CODOKEN_AUTH", "shared_secret").lower()
+    if auth_mode == "firebase":
+        click.echo("")
+        click.echo("  Testing broker connection…", nl=False)
+        try:
+            balance = asyncio.run(_test_broker_connection())
+            click.echo(f" connected!  Balance: {balance:.2f} CU")
+        except Exception as e:
+            click.echo(f" skipped ({e})")
+
     # -- Congratulations --
     click.echo("")
     click.echo("=" * 60)
@@ -508,6 +519,21 @@ async def wizard(defaults: bool) -> None:
     click.echo("")
     click.echo("=" * 60)
     click.echo("")
+
+
+async def _test_broker_connection() -> float:
+    """Connect to the broker as developer, receive the welcome message, return balance."""
+    import websockets as _ws
+    from codoken_auth import CodokenAuth, CodokenAuthError
+    auth = CodokenAuth("developer")
+    uri, headers = await auth.connect_config()
+    async with _ws.connect(uri, additional_headers=headers, open_timeout=10) as ws:
+        import asyncio as _asyncio
+        raw = await _asyncio.wait_for(ws.recv(), timeout=10)
+        msg = json.loads(raw)
+        if msg.get("type") == "welcome":
+            return float(msg.get("balance", 0.0))
+    return 0.0
 
 
 def codoken_auth_load_web_config():
