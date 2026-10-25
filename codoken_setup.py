@@ -481,7 +481,10 @@ async def wizard(defaults: bool) -> None:
         click.echo("")
         click.echo("  Testing broker connection…", nl=False)
         try:
-            balance = asyncio.run(_test_broker_connection())
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, _test_broker_connection())
+                balance = future.result(timeout=15)
             click.echo(f" connected!  Balance: {balance:.2f} CU")
         except Exception as e:
             click.echo(f" skipped ({e})")
