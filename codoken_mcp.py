@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 import time
 from typing import Any, Dict, Optional
 
@@ -48,7 +49,8 @@ from codoken_config import SUPPORTED_LANGUAGES
 # ---------------------------------------------------------------------------
 
 async def _connect(broker: Optional[str] = None):
-    auth = CodokenAuth("developer", broker_base=broker)
+    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
+    auth = CodokenAuth("developer", broker_base=broker, auth_store=auth_store)
     uri, headers = await auth.connect_config()
     ws = await websockets.connect(uri, additional_headers=headers)
     await auth.start_refresh(ws.send)

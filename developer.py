@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -134,7 +135,8 @@ def _ts() -> str:
 
 async def _connect(broker: Optional[str]):
     """Auth + open the developer socket. Returns (websocket, CodokenAuth)."""
-    auth = CodokenAuth("developer", broker_base=broker)
+    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
+    auth = CodokenAuth("developer", broker_base=broker, auth_store=auth_store)
     try:
         uri, headers = await auth.connect_config()
     except CodokenAuthError as exc:
