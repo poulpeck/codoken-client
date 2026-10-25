@@ -350,10 +350,20 @@ async def wizard(defaults: bool) -> None:
                     click.echo(f"  Found: {cmd}  ✓")
                     break
                 except Exception:
-                    click.echo(
-                        f"  {cmd} is installed but the daemon is not running.\n"
-                        + _engine_start_hint(cmd)
-                    )
+                    click.echo(f"  {cmd} is installed but the daemon is not running.")
+                    # On Mac, offer to start podman machine automatically
+                    if cmd == "podman" and sys.platform == "darwin":
+                        if click.confirm("  Start Podman machine now?", default=True):
+                            click.echo("  Starting Podman machine (this may take a minute)...")
+                            try:
+                                subprocess.run(["podman", "machine", "start"], check=True, timeout=120)
+                                subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=10)
+                                engine = cmd
+                                click.echo(f"  Podman machine started  ✓")
+                            except Exception as e:
+                                click.echo(f"  Could not start Podman machine: {e}\n" + _engine_start_hint(cmd))
+                    else:
+                        click.echo(_engine_start_hint(cmd))
         if not engine:
             if not shutil.which("podman") and not shutil.which("docker"):
                 click.echo(
