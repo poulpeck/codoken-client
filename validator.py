@@ -6,6 +6,7 @@ import os
 import sys
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Optional
 import docker
 import websockets
@@ -292,7 +293,7 @@ def _check_auth_ready() -> None:
     auth_mode = os.environ.get("CODOKEN_AUTH", "shared_secret").lower()
     if auth_mode != "firebase":
         return
-    auth_store = os.environ.get("CODOKEN_AUTH_STORE", ".codoken_auth.json")
+    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     has_store = os.path.exists(auth_store)
     has_env = bool(os.environ.get("CODOKEN_EMAIL") and os.environ.get("CODOKEN_PASSWORD"))
     if not has_store and not has_env:
@@ -317,8 +318,9 @@ async def validator_client():
         print(f"[Validator] Critical: Failed to initialize container client: {e}")
         return
 
+    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     while True:
-        auth = CodokenAuth(ROLE, auth_store=f".codoken_auth_validator_{os.getpid()}.json")
+        auth = CodokenAuth(ROLE, auth_store=auth_store)
         try:
             uri, extra_headers = await auth.connect_config()
             print(f"[Validator] Connecting to Broker at {uri}...")
