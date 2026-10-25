@@ -871,6 +871,14 @@ def _probe_engine(rep: Report) -> None:
     for cmd in ("podman", "docker"):
         if not shutil.which(cmd):
             continue
+        # Try subprocess first (works for both podman and docker regardless of socket path)
+        try:
+            subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=5)
+            rep.ok("container engine", f"{cmd} daemon responds")
+            return
+        except Exception:
+            pass
+        # Fallback: Docker SDK (picks up DOCKER_HOST / custom socket configs)
         try:
             import docker
             client = docker.from_env()
