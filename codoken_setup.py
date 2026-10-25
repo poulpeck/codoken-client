@@ -543,6 +543,8 @@ async def _test_broker_connection() -> float:
     import websockets as _ws
     from codoken_auth import CodokenAuth, CodokenAuthError
     auth_store = str(USER_CONFIG.parent / "auth.json")
+    # Ensure firebase mode even if CODOKEN_AUTH isn't set in the current env
+    os.environ.setdefault("CODOKEN_AUTH", "firebase")
     auth = CodokenAuth("developer", auth_store=auth_store)
     uri, headers = await auth.connect_config()
     async with _ws.connect(uri, additional_headers=headers, open_timeout=10) as ws:
