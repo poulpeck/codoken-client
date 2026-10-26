@@ -485,6 +485,18 @@ async def wizard(defaults: bool) -> None:
     click.echo("")
     click.echo("Background service: if installed, your node starts automatically")
     click.echo("on login and restarts itself if it crashes.")
+
+    # Warn if not running inside a venv — the service will use whatever Python
+    # runs setup, so a system Python will be missing the installed packages.
+    if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        click.echo("")
+        click.echo("  [WARN] You are not running inside a virtual environment.")
+        click.echo("  The service will be installed using the system Python, which")
+        click.echo("  may not have the required packages. To fix this, activate your")
+        click.echo("  venv first and re-run setup:")
+        click.echo("    source venv/bin/activate && python codoken_setup.py service install")
+        click.echo("")
+
     service_installed = False
     if click.confirm("Install as a background service? (recommended)", default=True):
         await _service_install(roles, doc)
