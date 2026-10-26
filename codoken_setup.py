@@ -942,6 +942,58 @@ def _probe_engine(rep: Report) -> None:
              "neither podman nor docker on PATH — validator cannot run tests")
 
 
+def _probe_services(rep: Report) -> None:
+    """Check installed background services are present, using the right Python, and running."""
+    if sys.platform == "darwin":
+        labels = {
+            "worker":    "dev.codoken.worker",
+            "validator": "dev.codoken.validator",
+        }
+        for role, label in labels.items():
+            plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+            if not plist.exists():
+                rep.warn(f"service ({role})", "not installed — run: python codoken_setup.py service install")
+                continue
+            # Check the Python path in the plist matches the current executable
+            try:
+                content = plist.read_text()
+                current_py = str(Path(sys.executable).resolve())
+                if current_py not in content:
+                    rep.warn(f"service ({role})",
+                             f"plist uses a different Python than the current one ({current_py}) — "
+                             f"reinstall with: python codoken_setup.py service install")
+                else:
+                    rep.ok(f"service ({role})", "plist Python matches")
+            except Exception as e:
+                rep.warn(f"service ({role})", f"could not read plist: {e}")
+            # Check if running via launchctl
+            try:
+                result = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
+                if result.returncode == 0:
+                    # launchctl list shows PID in first column; "-" means not running
+                    pid = result.stdout.strip().split()[0] if result.stdout.strip() else "-"
+                    if pid == "-":
+                        rep.warn(f"service ({role})", "installed but not running — check logs in ~/.codoken/logs/")
+                    else:
+                        rep.ok(f"service ({role})", f"running (pid {pid})")
+                else:
+                    rep.warn(f"service ({role})", "not loaded by launchctl")
+            except Exception as e:
+                rep.warn(f"service ({role})", f"launchctl check failed: {e}")
+    elif sys.platform.startswith("linux"):
+        for role in ("worker", "validator"):
+            unit = f"codoken-{role}.service"
+            result = subprocess.run(["systemctl", "--user", "is-active", unit],
+                                    capture_output=True, text=True)
+            status = result.stdout.strip()
+            if status == "active":
+                rep.ok(f"service ({role})", "running")
+            elif status == "inactive":
+                rep.warn(f"service ({role})", "installed but not running")
+            else:
+                rep.warn(f"service ({role})", f"not installed or unknown state ({status})")
+
+
 async def doctor(roles: str, no_network: bool) -> int:
     role_set = {r.strip() for r in roles.split(",") if r.strip()}
     if not role_set:
@@ -975,6 +1027,9 @@ async def doctor(roles: str, no_network: bool) -> int:
         await _probe_llm(rep)
     if "validator" in role_set:
         _probe_engine(rep)
+
+    print("services")
+    _probe_services(rep)
 
     print()
     if rep.failures:
