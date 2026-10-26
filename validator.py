@@ -25,57 +25,80 @@ from codoken_auth import CodokenAuth, CodokenAuthError  # noqa: E402
 def auto_configure_docker_host():
     """Zero-config engine detection (spec 3.4).
 
-    Probes for a running container engine in order:
-      macOS  — Podman machine socket (via `podman machine inspect`)
-      Linux  — Podman rootless socket at $XDG_RUNTIME_DIR/podman/podman.sock
-      Windows — Docker Desktop named pipe npipe:////./pipe/docker_engine
-    An explicit $DOCKER_HOST always wins. Called at client startup, not import
-    time, so importing this module has no side effects.
+    Probes for a running container engine. An explicit $DOCKER_HOST always
+    wins. On each platform tries Podman then Docker in order of preference.
+    Falls back to docker.from_env() (which tries /var/run/docker.sock) when
+    nothing is found.
     """
     if os.environ.get("DOCKER_HOST"):
         return
 
+    def _set(path: str) -> None:
+        uri = path if path.startswith(("unix://", "npipe://")) else f"unix://{path}"
+        os.environ["DOCKER_HOST"] = uri
+        print(f"[Validator] Auto-configured DOCKER_HOST -> {uri}")
+
+    def _sock_exists(path: str) -> bool:
+        return bool(path) and os.path.exists(path)
+
     if sys.platform == "darwin":
+        # 1. Podman machine socket
         try:
             result = subprocess.run(
                 ["podman", "machine", "inspect", "--format",
                  "{{.ConnectionInfo.PodmanSocket.Path}}"],
-                capture_output=True, text=True, check=True,
+                capture_output=True, text=True, timeout=5,
             )
-            socket_path = result.stdout.strip()
-            if socket_path:
-                if not socket_path.startswith("unix://"):
-                    socket_path = f"unix://{socket_path}"
-                os.environ["DOCKER_HOST"] = socket_path
-                print(f"[Validator] Auto-configured DOCKER_HOST -> {socket_path}")
-        except (subprocess.SubprocessError, FileNotFoundError):
-            pass  # Podman machine not running; docker.from_env() will try /var/run/docker.sock
+            sock = result.stdout.strip()
+            if sock and _sock_exists(sock):
+                _set(sock)
+                return
+        except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        # 2. Docker Desktop socket
+        docker_sock = "/var/run/docker.sock"
+        if _sock_exists(docker_sock):
+            _set(docker_sock)
 
     elif sys.platform.startswith("linux"):
-        # Podman rootless socket — preferred over /var/run/docker.sock when present.
-        candidates = []
-        xdg = os.environ.get("XDG_RUNTIME_DIR")
-        if xdg:
-            candidates.append(os.path.join(xdg, "podman", "podman.sock"))
-        candidates.append(os.path.expanduser(
-            "~/.local/share/containers/podman/machine/podman.sock"))
+        # 1. Podman rootless — $XDG_RUNTIME_DIR/podman/podman.sock
+        xdg = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        candidates = [
+            os.path.join(xdg, "podman", "podman.sock"),
+            os.path.expanduser("~/.local/share/containers/podman/machine/podman.sock"),
+        ]
         for sock in candidates:
-            if os.path.exists(sock):
-                os.environ["DOCKER_HOST"] = f"unix://{sock}"
-                print(f"[Validator] Auto-configured DOCKER_HOST -> unix://{sock}")
+            if _sock_exists(sock):
+                _set(sock)
                 return
-        # Fall through to docker.from_env() which tries /var/run/docker.sock
+        # 2. Podman machine socket (less common on Linux)
+        try:
+            result = subprocess.run(
+                ["podman", "machine", "inspect", "--format",
+                 "{{.ConnectionInfo.PodmanSocket.Path}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            sock = result.stdout.strip()
+            if sock and _sock_exists(sock):
+                _set(sock)
+                return
+        except (subprocess.SubprocessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        # 3. Docker — fall through to docker.from_env() -> /var/run/docker.sock
 
     elif sys.platform == "win32":
-        # Docker Desktop on Windows exposes a named pipe.
-        pipe = "npipe:////./pipe/docker_engine"
-        try:
-            import docker
-            docker.DockerClient(base_url=pipe).ping()
-            os.environ["DOCKER_HOST"] = pipe
-            print(f"[Validator] Auto-configured DOCKER_HOST -> {pipe}")
-        except Exception:
-            pass  # Docker Desktop not running; docker.from_env() will try its own default
+        # 1. Podman Desktop named pipe
+        podman_pipe = "npipe:////./pipe/podman-machine-default"
+        # 2. Docker Desktop named pipe
+        docker_pipe = "npipe:////./pipe/docker_engine"
+        for pipe in (podman_pipe, docker_pipe):
+            try:
+                import docker as _docker
+                _docker.DockerClient(base_url=pipe).ping()
+                _set(pipe)
+                return
+            except Exception:
+                pass
 
 # ==========================================
 # 2. Configuration & Runtimes
