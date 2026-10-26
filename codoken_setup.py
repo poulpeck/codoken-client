@@ -235,12 +235,38 @@ async def wizard(defaults: bool) -> None:
             sys.exit(1)
 
     click.echo("\n-- Account --")
-    click.echo("Sign in with your Codoken account (Google, email link, or email + password).")
-    click.echo("Your credits and identity are tied to this account.\n")
 
     from codoken_auth import CodokenAuth, CodokenAuthError
 
-    token_data = await _browser_auth()
+    auth_path = USER_CONFIG.parent / "auth.json"
+    # Skip browser login if valid credentials are already persisted.
+    if auth_path.exists():
+        try:
+            stored = json.loads(auth_path.read_text())
+            entry = stored.get("developer") or stored.get("worker") or stored.get("validator")
+            if entry and entry.get("refresh_token") and entry.get("uid"):
+                uid = entry["uid"][:12]
+                email = entry.get("email", "")
+                label = email if email else uid + "…"
+                click.echo(f"  Already signed in as {label}  (skip login)")
+                click.echo(f"  To switch accounts, delete ~/.codoken/auth.json and re-run setup.\n")
+                token_data = {
+                    "uid": entry["uid"],
+                    "idToken": entry.get("id_token", ""),
+                    "refreshToken": entry.get("refresh_token", ""),
+                    "email": entry.get("email", ""),
+                }
+                # Jump straight to post-auth steps
+                _after_auth = True
+        except Exception:
+            _after_auth = False
+    else:
+        _after_auth = False
+
+    if not _after_auth:
+        click.echo("Sign in with your Codoken account (Google, email link, or email + password).")
+        click.echo("Your credits and identity are tied to this account.\n")
+        token_data = await _browser_auth()
 
     # Persist the token to ~/.codoken/auth.json in the role-keyed format
     # that CodokenAuth._load_persisted() expects: {role: {uid, id_token, refresh_token}}
