@@ -32,6 +32,9 @@ VERSION = "1.1.0"
 # Model name: $CODOKEN_WORKER_MODEL > ~/.codoken/config.json > auto-detect from backend
 WORKER_MODEL: Optional[str] = os.environ.get("CODOKEN_WORKER_MODEL") or None
 
+# LLM generation timeout in seconds. Large models (27B+) may need 180-300s.
+LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "180"))
+
 # Known local endpoints to probe
 ENDPOINTS = {
     "ollama": {"base": "http://localhost:11434", "test": "/api/tags", "type": "ollama"},
@@ -137,7 +140,7 @@ async def execute_local_llm(backend: dict, prompt: str) -> tuple[str, dict]:
                         "top_p": LOW_REASONING_CONFIG["top_p"]
                     }
                 }
-                response = await client.post(f"{base_url}/api/chat", json=payload, timeout=120.0)
+                response = await client.post(f"{base_url}/api/chat", json=payload, timeout=LLM_TIMEOUT_S)
                 if response.status_code == 200:
                     data = response.json()
                     content = data.get("message", {}).get("content", "").strip()
@@ -171,7 +174,7 @@ async def execute_local_llm(backend: dict, prompt: str) -> tuple[str, dict]:
                     "stream": False
                 }
                 start = time.monotonic()
-                response = await client.post(f"{base_url}/v1/chat/completions", json=payload, timeout=120.0)
+                response = await client.post(f"{base_url}/v1/chat/completions", json=payload, timeout=LLM_TIMEOUT_S)
                 if response.status_code == 200:
                     data = response.json()
                     content = data["choices"][0]["message"]["content"].strip()
