@@ -310,13 +310,22 @@ def _check_auth_ready() -> None:
 # ==========================================
 async def validator_client():
     _check_auth_ready()
-    auto_configure_docker_host()
-    try:
-        client = docker.from_env()
-        ensure_images_cached(client)
-    except Exception as e:
-        print(f"[Validator] Critical: Failed to initialize container client: {e}")
-        return
+
+    # Retry until the container engine socket is available (e.g. launchd may
+    # start this service before Podman machine is fully up).
+    client = None
+    while client is None:
+        auto_configure_docker_host()
+        try:
+            candidate = docker.from_env()
+            candidate.ping()
+            client = candidate
+        except Exception as e:
+            print(f"[Validator] Waiting for container engine: {e}. Retrying in 10s...")
+            os.environ.pop("DOCKER_HOST", None)  # force re-probe on next attempt
+            await asyncio.sleep(10)
+
+    ensure_images_cached(client)
 
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     while True:
