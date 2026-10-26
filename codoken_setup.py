@@ -902,7 +902,6 @@ async def _probe_auth(rep: Report, broker_base: str) -> None:
     try:
         uri, headers = await asyncio.wait_for(instance.connect_config(), 20)
         uid = (instance._uid or "?")[:12]
-        email_found = instance.email or os.environ.get("CODOKEN_EMAIL")
         method = "persisted" if os.path.exists(real_store) else "fresh"
         rep.ok(f"firebase sign-in ({method})", f"uid={uid}…")
     except Exception as exc:  # noqa: BLE001
