@@ -700,6 +700,7 @@ async def _launchd_install(roles: set[str], config: dict) -> None:
         "CODOKEN_AUTH": "firebase",
         "FIREBASE_WEB_CONFIG": config.get("firebase_web_config", ""),
         "CODOKEN_AUTH_STORE": config.get("auth_store", ""),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"),
     }
     installed = []
     for role in ("worker", "validator"):
