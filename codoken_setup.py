@@ -751,6 +751,11 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
         "CODOKEN_AUTH": "firebase",
         "FIREBASE_WEB_CONFIG": config.get("firebase_web_config", ""),
         "CODOKEN_AUTH_STORE": config.get("auth_store", ""),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PYTHONUNBUFFERED": "1",
+        # XDG_RUNTIME_DIR is required for Podman rootless socket discovery on Linux.
+        # systemd user services don't inherit it from the login session.
+        "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
     }
     for role in ("worker", "validator"):
         if role not in roles:
