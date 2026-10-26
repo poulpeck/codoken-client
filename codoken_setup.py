@@ -622,7 +622,7 @@ def _engine_start_hint(cmd: str) -> str:
 # Service management
 # ---------------------------------------------------------------------------
 def _repo_python() -> str:
-    return str(Path(sys.executable).resolve())
+    return sys.executable
 
 
 def _repo_dir() -> str:
