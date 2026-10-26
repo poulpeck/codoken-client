@@ -83,6 +83,7 @@ def auto_configure_docker_host():
 # Broker URI + credentials come from codoken_auth (CODOKEN_AUTH /
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "validator"
+VERSION = "1.1.0"
 
 # Polyglot runtime map (spec 3.4). `files` is the file layout written into
 # the read-only /app mount: one file = solution + harness concatenated
@@ -341,6 +342,10 @@ async def validator_client():
             uri, extra_headers = await auth.connect_config()
             print(f"[Validator] Connecting to Broker at {uri}...")
             async with websockets.connect(uri, additional_headers=extra_headers) as websocket:
+                await websocket.send(json.dumps({
+                    "action": "register_validator",
+                    "version": VERSION,
+                }))
                 print("[Validator] Successfully connected and listening for task reviews...")
 
                 # Keep the Firebase ID token fresh for the life of the session
@@ -350,6 +355,10 @@ async def validator_client():
                 async for message_str in websocket:
                     message = json.loads(message_str)
                     print(f"[Validator Debug] Received raw message type: {message.get('type')}")
+
+                    if message.get("type") == "error" and message.get("code") == "version_too_old":
+                        print(f"[Validator] {message.get('message')}")
+                        sys.exit(1)
 
                     if message.get("type") == "task_review":
                         task_id = message.get("task_id")

@@ -27,6 +27,7 @@ logging.basicConfig(
 # Broker URI + credentials come from codoken_auth (CODOKEN_AUTH /
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "worker"
+VERSION = "1.1.0"
 
 # Model name: $CODOKEN_WORKER_MODEL > ~/.codoken/config.json > auto-detect from backend
 WORKER_MODEL: Optional[str] = os.environ.get("CODOKEN_WORKER_MODEL") or None
@@ -289,6 +290,7 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
         # broker's dispatch never oversubscribes it.
         await send(json.dumps({
             "action": "register_worker",
+            "version": VERSION,
             "capabilities": ["python", "cpp", "javascript", "typescript",
                              "rust", "golang", "php", "ruby", "java"],
             "max_concurrent": MAX_PARALLEL,
@@ -305,6 +307,9 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
             except json.JSONDecodeError:
                 logging.error("Error: Failed to decode received JSON message.")
                 continue
+            if message.get("type") == "error" and message.get("code") == "version_too_old":
+                logging.error(message.get("message"))
+                sys.exit(1)
             if message.get("type") == "task_assignment":
                 job = asyncio.create_task(process(message))
                 in_flight.add(job)
