@@ -411,4 +411,7 @@ async def validator_client():
             auth.stop()
 
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):
+        print(VERSION)
+        sys.exit(0)
     asyncio.run(validator_client())

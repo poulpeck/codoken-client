@@ -391,6 +391,9 @@ async def run_worker():
         await asyncio.sleep(RECONNECT_DELAY)
 
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):
+        print(VERSION)
+        sys.exit(0)
     try:
         asyncio.run(run_worker())
     except KeyboardInterrupt:

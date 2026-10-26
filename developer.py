@@ -42,6 +42,8 @@ import websockets
 import yaml
 from websockets.exceptions import ConnectionClosed
 
+VERSION = "1.1.0"
+
 import codoken_config
 
 # Layered preferences (.codoken/config.json -> env). Must run before
@@ -177,6 +179,7 @@ async def _send_then_await(
 # Commands
 # ---------------------------------------------------------------------------
 @click.group()
+@click.version_option(VERSION, "--version", "-V", message="%(version)s")
 def cli() -> None:
     """Codoken developer client: submit manifests, track tasks, check credits."""
 
