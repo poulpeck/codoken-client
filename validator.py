@@ -129,12 +129,12 @@ RUNTIME_CONFIG = {
         "command": "node solution.js"
     },
     "typescript": {
-        "image": "codoken-ts:latest",
+        "image": "codoken-ts:1.0",
         "files": ("solution.ts",),
         "command": "ts-node solution.ts",
         "build": {
             "base": "node:18-slim",
-            "run": "npm install -g ts-node typescript @types/node --silent",
+            "run": "npm install -g ts-node@10.9.2 typescript@5.3.3 @types/node@18 --silent",
         },
     },
     "rust": {
