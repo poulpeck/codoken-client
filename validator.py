@@ -261,11 +261,13 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
     container. Returns (status, details, stdout, exit_code) where `stdout`
     is the capped raw run output the verdict reports (spec 5.2)."""
     import re as _re
-    fence_match = _re.search(r"```[a-zA-Z0-9+#]*\n(.*?)```", generated_code.strip(), _re.DOTALL)
+    _raw = generated_code.strip()
+    fence_match = _re.search(r"```[a-zA-Z0-9+# ]*\r?\n(.*?)```", _raw, _re.DOTALL)
     if fence_match:
-        generated_code = fence_match.group(1).strip()
+        _extracted = fence_match.group(1).strip()
+        generated_code = _extracted if _extracted else _raw
     else:
-        generated_code = generated_code.strip()
+        generated_code = _raw
 
     key = LANGUAGE_ALIASES.get(language.lower(), language.lower())
     config = RUNTIME_CONFIG.get(key)

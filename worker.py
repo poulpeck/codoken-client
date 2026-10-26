@@ -247,14 +247,20 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
 
                 # Extract code from LLM output: if there's a fenced code block,
                 # take only its contents; otherwise use the full output stripped.
+                # The fence header may have a space before the backticks or use
+                # Windows-style line endings, so we normalise first and fall back
+                # to the raw output if stripping would leave us with nothing.
                 import re as _re
+                _raw = generated_code.strip()
                 _fence_match = _re.search(
-                    r"```[a-zA-Z0-9+#]*\n(.*?)```", generated_code.strip(), _re.DOTALL
+                    r"```[a-zA-Z0-9+# ]*\r?\n(.*?)```", _raw, _re.DOTALL
                 )
                 if _fence_match:
-                    generated_code = _fence_match.group(1).strip()
+                    _extracted = _fence_match.group(1).strip()
+                    generated_code = _extracted if _extracted else _raw
                 else:
-                    generated_code = generated_code.strip()
+                    generated_code = _raw
+                logging.info(f"Task [{task_id}] generated {len(generated_code)}B of code.")
 
                 # Check for self-refusal or LLM communication failure
                 LLM_ERROR_PREFIXES = ("ERROR:", "Failed to communicate", "Ollama Error:", "Lmstudio Error:", "Llamacpp Error:")
