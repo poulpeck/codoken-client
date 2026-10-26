@@ -895,16 +895,16 @@ async def _probe_auth(rep: Report, broker_base: str) -> None:
         return
     rep.ok("firebase web config")
 
-    # Use a throwaway store so the doctor never touches the real persisted identity.
-    tmp_store = os.path.join(tempfile.mkdtemp(prefix="codoken-doctor-"), "auth.json")
-    email = os.environ.get("CODOKEN_EMAIL")
-    password = os.environ.get("CODOKEN_PASSWORD")
-    instance = CodokenAuth("developer", broker_base=broker_base,
-                           auth_store=tmp_store, email=email, password=password)
+    # Use the real auth store so the check tests the actual persisted identity.
+    real_store = os.environ.get("CODOKEN_AUTH_STORE",
+                                str(Path.home() / ".codoken" / "auth.json"))
+    instance = CodokenAuth("developer", broker_base=broker_base, auth_store=real_store)
     try:
         uri, headers = await asyncio.wait_for(instance.connect_config(), 20)
-        method = "email" if email else "anonymous"
-        rep.ok(f"firebase sign-in ({method})", f"uid={(instance._uid or '?')[:12]}…")
+        uid = (instance._uid or "?")[:12]
+        email_found = instance.email or os.environ.get("CODOKEN_EMAIL")
+        method = "persisted" if os.path.exists(real_store) else "fresh"
+        rep.ok(f"firebase sign-in ({method})", f"uid={uid}…")
     except Exception as exc:  # noqa: BLE001
         rep.fail("firebase sign-in", str(exc)[:120])
     finally:
@@ -976,7 +976,7 @@ def _probe_services(rep: Report) -> None:
             # Check the Python path in the plist matches the current executable
             try:
                 content = plist.read_text()
-                current_py = str(Path(sys.executable).resolve())
+                current_py = sys.executable  # do NOT resolve() — that follows venv symlinks
                 if current_py not in content:
                     rep.warn(f"service ({role})",
                              f"plist uses a different Python than the current one ({current_py}) — "
@@ -989,12 +989,12 @@ def _probe_services(rep: Report) -> None:
             try:
                 result = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
                 if result.returncode == 0:
-                    # launchctl list shows PID in first column; "-" means not running
-                    pid = result.stdout.strip().split()[0] if result.stdout.strip() else "-"
-                    if pid == "-":
-                        rep.warn(f"service ({role})", "installed but not running — check logs in ~/.codoken/logs/")
+                    import re as _re
+                    pid_match = _re.search(r'"PID"\s*=\s*(\d+)', result.stdout)
+                    if pid_match:
+                        rep.ok(f"service ({role})", f"running (pid {pid_match.group(1)})")
                     else:
-                        rep.ok(f"service ({role})", f"running (pid {pid})")
+                        rep.warn(f"service ({role})", "installed but not running — check logs in ~/.codoken/logs/")
                 else:
                     rep.warn(f"service ({role})", "not loaded by launchctl")
             except Exception as e:
