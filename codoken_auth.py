@@ -179,7 +179,10 @@ class CodokenAuth:
         if self._email and self._password:
             await self._sign_in_email(api_key, self._email, self._password)
         else:
-            await self._sign_in_anonymous(api_key)
+            raise CodokenAuthError(
+                "CODOKEN_AUTH=firebase but no credentials found. "
+                "Run the setup wizard first: python codoken_setup.py"
+            )
         self._persist()
 
     async def _sign_in_anonymous(self, api_key: str) -> None:
