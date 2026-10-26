@@ -241,12 +241,16 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
                 # Execute local LLM generation
                 generated_code, telemetry = await execute_local_llm(backend, prompt)
 
-                # Strip markdown code fences that LLMs sometimes add despite instructions
+                # Extract code from LLM output: if there's a fenced code block,
+                # take only its contents; otherwise use the full output stripped.
                 import re as _re
-                generated_code = _re.sub(
-                    r"^```[a-zA-Z0-9+#]*\n?", "", generated_code.strip(), flags=_re.MULTILINE
-                ).strip()
-                generated_code = _re.sub(r"^```$", "", generated_code, flags=_re.MULTILINE).strip()
+                _fence_match = _re.search(
+                    r"```[a-zA-Z0-9+#]*\n(.*?)```", generated_code.strip(), _re.DOTALL
+                )
+                if _fence_match:
+                    generated_code = _fence_match.group(1).strip()
+                else:
+                    generated_code = generated_code.strip()
 
                 # Check for self-refusal or LLM communication failure
                 LLM_ERROR_PREFIXES = ("ERROR:", "Failed to communicate", "Ollama Error:", "Lmstudio Error:", "Llamacpp Error:")
