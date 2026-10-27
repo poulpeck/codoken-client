@@ -325,6 +325,7 @@ def _render_result(msg: Dict[str, Any], out: Optional[str] = None) -> int:
     for rnd in rounds:
         votes = ", ".join(
             f"{v.get('validator')}:{v.get('status')}({v.get('exit_code')})"
+            + (f" — {v['details']}" if v.get('details') else "")
             for v in rnd.get("votes") or []
         )
         line = f"    round {rnd.get('round')}: {votes or 'no votes'}"

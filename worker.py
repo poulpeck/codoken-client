@@ -33,7 +33,7 @@ VERSION = "1.1.0"
 WORKER_MODEL: Optional[str] = os.environ.get("CODOKEN_WORKER_MODEL") or None
 
 # LLM generation timeout in seconds. Large models (27B+) may need 180-300s.
-LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "180"))
+LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "300"))
 
 # Known local endpoints to probe
 ENDPOINTS = {
