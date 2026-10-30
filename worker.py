@@ -28,7 +28,7 @@ logging.basicConfig(
 # Broker URI + credentials come from codoken_auth (CODOKEN_AUTH /
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "worker"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Model name: $CODOKEN_WORKER_MODEL > ~/.codoken/config.json > auto-detect from backend
 WORKER_MODEL: Optional[str] = os.environ.get("CODOKEN_WORKER_MODEL") or None
