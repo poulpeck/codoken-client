@@ -122,7 +122,7 @@ RUNTIME_CONFIG = {
     "cpp": {
         "image": "gcc:latest",
         "files": ("solution.cpp",),
-        "command": "g++ solution.cpp -o solution && ./solution"
+        "command": "g++ solution.cpp -o /tmp/solution && /tmp/solution"
     },
     "javascript": {
         "image": "node:18-slim",
@@ -141,7 +141,7 @@ RUNTIME_CONFIG = {
     "rust": {
         "image": "rust:latest",
         "files": ("solution.rs",),
-        "command": "rustc solution.rs -o solution && ./solution"
+        "command": "rustc solution.rs -o /tmp/solution && /tmp/solution"
     },
     "golang": {
         "image": "golang:alpine",
@@ -162,7 +162,7 @@ RUNTIME_CONFIG = {
         "image": "eclipse-temurin:21-jdk-alpine",
         "files": ("Solution.java", "Test.java"),
         # Compile both files together, run Test which calls Solution methods.
-        "command": "javac Solution.java Test.java && java -ea -cp . Test"
+        "command": "javac -d /tmp Solution.java Test.java && java -ea -cp /tmp Test"
     },
 }
 
