@@ -145,8 +145,8 @@ RUNTIME_CONFIG = {
     },
     "golang": {
         "image": "golang:alpine",
-        "files": ("solution.go", "test.go"),
-        "command": "go run solution.go test.go"
+        "files": ("solution.go",),
+        "command": "go run solution.go"
     },
     "php": {
         "image": "php:8.2-cli",
@@ -281,7 +281,14 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
     with tempfile.TemporaryDirectory() as temp_dir:
         files = config["files"]
         if len(files) == 1:
-            full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
+            if key == "golang":
+                full_code = (
+                    "package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\n"
+                    f"{generated_code}\n\n"
+                    f"func main() {{\n{test_code}\n}}\n"
+                )
+            else:
+                full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
             contents = {files[0]: full_code}
         else:
             contents = {files[0]: generated_code, files[1]: test_code}
