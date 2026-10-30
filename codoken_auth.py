@@ -333,6 +333,128 @@ class CodokenAuth:
             return None
 
     # ------------------------------------------------------------------
+    # Interactive re-authentication (browser flow, no setup wizard needed)
+    # ------------------------------------------------------------------
+    @staticmethod
+    async def reauth(auth_store: Optional[str] = None) -> None:
+        """Open a browser sign-in, persist the result, and return.
+
+        Call this when _ensure_token raises CodokenAuthError due to missing
+        credentials. Works exactly like the setup wizard auth step but without
+        the rest of the wizard. After returning, re-create the CodokenAuth
+        instance and retry connect_config().
+        """
+        import importlib
+        import json as _json
+        import pathlib
+        import secrets
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import webbrowser
+
+        CLI_AUTH_URL = "https://codoken.io/cli-auth.html"
+        _AUTH_TIMEOUT = 120
+
+        def _free_port() -> int:
+            import socket
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                return s.getsockname()[1]
+
+        port  = _free_port()
+        nonce = secrets.token_urlsafe(16)
+        url   = f"{CLI_AUTH_URL}?port={port}&nonce={nonce}"
+
+        result: dict = {}
+        event = threading.Event()
+
+        class _Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_): pass
+
+            def do_POST(self):
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    data   = _json.loads(self.rfile.read(length))
+                except Exception:
+                    self.send_response(400); self.end_headers(); return
+                if data.get("nonce") != nonce:
+                    self.send_response(403); self.end_headers(); return
+                result.update(data)
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "https://codoken.io")
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+                event.set()
+
+            def do_OPTIONS(self):
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "https://codoken.io")
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.end_headers()
+
+        server = HTTPServer(("127.0.0.1", port), _Handler)
+        server.timeout = 1
+
+        def _serve():
+            while not event.is_set():
+                server.handle_request()
+            server.server_close()
+
+        threading.Thread(target=_serve, daemon=True).start()
+
+        opened = webbrowser.open(url)
+        if opened:
+            print(f"\n  Opening browser → {CLI_AUTH_URL}")
+            print("  Sign in with Google or email, then return here.")
+        else:
+            print(f"\n  Could not open browser automatically.")
+            print(f"  Open this URL manually:\n\n    {url}\n")
+
+        print(f"  Waiting for sign-in (timeout {_AUTH_TIMEOUT}s)…", end="", flush=True)
+        waited = 0
+        while not event.is_set() and waited < _AUTH_TIMEOUT:
+            await asyncio.sleep(1)
+            waited += 1
+            if waited % 10 == 0:
+                print(".", end="", flush=True)
+        print("")
+
+        if not result:
+            print(
+                f"\n  Timed out. Open this URL and sign in, then paste the token:\n\n"
+                f"    {CLI_AUTH_URL}\n"
+            )
+            id_token = input("  Paste ID token: ").strip()
+            if not id_token:
+                raise CodokenAuthError("No token provided — re-authentication aborted.")
+            result = {"idToken": id_token, "refreshToken": "", "uid": "", "email": ""}
+
+        store_path = pathlib.Path(
+            auth_store
+            or os.environ.get("CODOKEN_AUTH_STORE")
+            or (pathlib.Path.home() / ".codoken" / "auth.json")
+        )
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            existing = _json.loads(store_path.read_text()) if store_path.exists() else {}
+        except Exception:
+            existing = {}
+        role_entry = {
+            "uid":           result.get("uid", ""),
+            "id_token":      result.get("idToken", ""),
+            "refresh_token": result.get("refreshToken", ""),
+            "email":         result.get("email", ""),
+            "saved_at":      time.time(),
+        }
+        for role in ("worker", "validator", "developer"):
+            existing[role] = role_entry
+        store_path.write_text(_json.dumps(existing, indent=2))
+        email_label = result.get("email") or (result.get("uid") or "")[:12] + "…"
+        print(f"  Signed in as {email_label}  ✓\n")
+
+    # ------------------------------------------------------------------
     # Periodic re-auth (keeps long-lived sessions verifiable)
     # ------------------------------------------------------------------
     async def start_refresh(self, send: Callable[[str], Any]) -> Optional[asyncio.Task]:

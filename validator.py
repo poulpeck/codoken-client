@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 import docker
 import websockets
+from websockets.exceptions import ConnectionClosed as WsConnectionClosed
 
 import codoken_config
 
@@ -321,29 +322,10 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
         except Exception as ex:
             return "rejected", f"Sandbox execution error: {str(ex)}", "", None
 
-def _check_auth_ready() -> None:
-    """Exit with a clear message if firebase auth is configured but no credentials exist."""
-    auth_mode = os.environ.get("CODOKEN_AUTH", "shared_secret").lower()
-    if auth_mode != "firebase":
-        return
-    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
-    has_store = os.path.exists(auth_store)
-    has_env = bool(os.environ.get("CODOKEN_EMAIL") and os.environ.get("CODOKEN_PASSWORD"))
-    if not has_store and not has_env:
-        print(
-            "[Validator] CODOKEN_AUTH=firebase but no credentials found.\n"
-            "  Run the setup wizard first:  python setup.py\n"
-            "  Or set CODOKEN_EMAIL and CODOKEN_PASSWORD environment variables."
-        )
-        sys.exit(1)
-
-
 # ==========================================
 # 5. WebSocket Client & Task Loop
 # ==========================================
 async def validator_client():
-    _check_auth_ready()
-
     # Retry until the container engine socket is available (e.g. launchd may
     # start this service before Podman machine is fully up).
     client = None
@@ -423,12 +405,17 @@ async def validator_client():
                         }
                         await websocket.send(json.dumps(verdict_payload))
 
-        except websockets.exceptions.ConnectionClosed:
+        except WsConnectionClosed:
             print("[Validator] Connection lost. Reconnecting in 5s...")
             await asyncio.sleep(5)
         except CodokenAuthError as e:
-            print(f"[Validator] Authentication failed: {e}. Exiting.")
-            sys.exit(1)
+            print(f"[Validator] Authentication failed: {e}. Launching re-authentication...")
+            try:
+                await CodokenAuth.reauth(auth_store=auth_store)
+            except Exception as reauth_exc:
+                print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
+                sys.exit(1)
+            continue  # retry immediately with fresh credentials
         except Exception as e:
             print(f"[Validator] Unexpected error: {e}. Reconnecting in 5s...")
             await asyncio.sleep(5)

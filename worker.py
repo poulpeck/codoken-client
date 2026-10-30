@@ -8,6 +8,7 @@ import time
 from typing import Optional
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed as WsConnectionClosed
 
 import codoken_config
 
@@ -33,7 +34,7 @@ VERSION = "1.1.0"
 WORKER_MODEL: Optional[str] = os.environ.get("CODOKEN_WORKER_MODEL") or None
 
 # LLM generation timeout in seconds. Large models (27B+) may need 180-300s.
-LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "300"))
+LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "180"))
 
 # Known local endpoints to probe
 ENDPOINTS = {
@@ -351,25 +352,7 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
             pass
 
 
-def _check_auth_ready() -> None:
-    """Exit with a clear message if firebase auth is configured but no credentials exist."""
-    auth_mode = os.environ.get("CODOKEN_AUTH", "shared_secret").lower()
-    if auth_mode != "firebase":
-        return
-    auth_store = os.environ.get("CODOKEN_AUTH_STORE", ".codoken_auth.json")
-    has_store = os.path.exists(auth_store)
-    has_env = bool(os.environ.get("CODOKEN_EMAIL") and os.environ.get("CODOKEN_PASSWORD"))
-    if not has_store and not has_env:
-        logging.error(
-            "CODOKEN_AUTH=firebase but no credentials found.\n"
-            "  Run the setup wizard first:  python setup.py\n"
-            "  Or set CODOKEN_EMAIL and CODOKEN_PASSWORD environment variables."
-        )
-        sys.exit(1)
-
-
 async def run_worker():
-    _check_auth_ready()
     while True:
         # Auto-detect active local LLM before connecting to the broker
         active_backend = await detect_local_llm()
@@ -385,13 +368,18 @@ async def run_worker():
             async with websockets.connect(uri, additional_headers=extra_headers) as websocket:
                 logging.info("Successfully connected to the broker!")
                 await worker_session(websocket, auth, active_backend)
-        except websockets.exceptions.ConnectionClosed as e:
+        except WsConnectionClosed as e:
             logging.warning(f"Connection lost with broker ({e}). Reconnecting in {RECONNECT_DELAY}s...")
         except socket.gaierror:
             logging.error(f"Network or DNS issue. Reconnecting in {RECONNECT_DELAY}s...")
         except CodokenAuthError as e:
-            logging.error(f"Authentication failed: {e}. Exiting.")
-            sys.exit(1)
+            logging.warning(f"Authentication failed: {e}. Launching re-authentication...")
+            try:
+                await CodokenAuth.reauth()
+            except Exception as reauth_exc:
+                logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
+                sys.exit(1)
+            continue  # retry immediately with fresh credentials
         except Exception as e:
             logging.error(f"Unexpected error: {e}. Reconnecting in {RECONNECT_DELAY}s...")
         finally:
