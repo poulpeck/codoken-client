@@ -42,7 +42,7 @@ import websockets
 import yaml
 from websockets.exceptions import ConnectionClosed
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 import codoken_config
 

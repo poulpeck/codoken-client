@@ -107,7 +107,7 @@ def auto_configure_docker_host():
 # Broker URI + credentials come from codoken_auth (CODOKEN_AUTH /
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "validator"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # Polyglot runtime map (spec 3.4). `files` is the file layout written into
 # the read-only /app mount: one file = solution + harness concatenated
