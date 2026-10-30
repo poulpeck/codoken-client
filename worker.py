@@ -47,7 +47,7 @@ ENDPOINTS = {
 LOW_REASONING_CONFIG = {
     "temperature": 0.1,
     "top_p": 0.9,
-    "max_tokens": 2048
+    "max_tokens": 4096
 }
 
 SYSTEM_GUARDRAIL_PROMPT = """
