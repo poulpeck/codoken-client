@@ -289,6 +289,11 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                     f"{generated_code}\n\n"
                     f"func main() {{\n{test_code}\n}}\n"
                 )
+            elif key == "rust":
+                full_code = (
+                    f"{generated_code}\n\n"
+                    f"fn main() {{\n{test_code}\n}}\n"
+                )
             else:
                 full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
             contents = {files[0]: full_code}
