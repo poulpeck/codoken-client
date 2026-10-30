@@ -141,12 +141,14 @@ RUNTIME_CONFIG = {
     "rust": {
         "image": "rust:latest",
         "files": ("solution.rs",),
-        "command": "rustc solution.rs -o /tmp/solution && /tmp/solution"
+        "command": "rustc solution.rs -o /tmp/solution && /tmp/solution",
+        "mem_limit": "512m",
     },
     "golang": {
         "image": "golang:alpine",
         "files": ("solution.go",),
-        "command": "go run solution.go"
+        "command": "go run solution.go",
+        "mem_limit": "512m",
     },
     "php": {
         "image": "php:8.2-cli",
@@ -303,7 +305,7 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 volumes={_docker_volume_path(temp_dir): {"bind": "/app", "mode": "ro"}},
                 working_dir="/app",
                 network_disabled=True,
-                mem_limit="256m",
+                mem_limit=config.get("mem_limit", "256m"),
                 cpu_quota=50000,
                 remove=False,
                 stderr=True,
