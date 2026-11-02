@@ -201,7 +201,7 @@ async def execute_local_llm(backend: dict, prompt: str) -> tuple[str, dict]:
             logging.error(error_msg)
             return error_msg, {}
 
-async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
+async def worker_session(websocket, auth: CodokenAuth, backend: Optional[dict], start_paused: bool = False) -> None:
     """Run one broker session: register, then service the task pool until the
     socket closes.
 
@@ -244,7 +244,7 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
                 logging.info(f"Received task assignment [{task_id}] for language: {language}")
 
                 # Execute local LLM generation
-                generated_code, telemetry = await execute_local_llm(backend, prompt)
+                generated_code, telemetry = await execute_local_llm(nonlocal_backend[0], prompt)
 
                 # Extract code from LLM output: if there's a fenced code block,
                 # take only its contents; otherwise use the full output stripped.
@@ -289,6 +289,9 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
             except Exception as exc:  # noqa: BLE001 - never crash the pool
                 logging.error(f"Task [{task_id}] failed: {exc}")
 
+    nonlocal_backend = [backend]  # mutable cell so process() sees LLM backend updates
+    paused = [start_paused]
+    probe_task: Optional[asyncio.Task] = None
     writer_task = asyncio.create_task(writer())
     try:
         # Keep the Firebase ID token fresh for the life of the session
@@ -305,10 +308,35 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
                              "rust", "golang", "php", "ruby", "java"],
             "max_concurrent": MAX_PARALLEL,
         }))
+
+        # If no LLM was available at connect time, register as paused so the
+        # broker skips us for dispatch. A background probe re-activates us
+        # as soon as an LLM backend appears.
+        if start_paused:
+            await send(json.dumps({"action": "set_paused", "paused": True}))
+            logging.warning("Worker registered as PAUSED — no LLM backend available. Waiting for one...")
+
         logging.info(
             f"Registered worker capabilities with broker (max_concurrent={MAX_PARALLEL}). "
             "Listening for tasks..."
         )
+
+        # Background LLM probe: toggles pause/resume as the LLM appears/disappears.
+        async def llm_probe() -> None:
+            while True:
+                await asyncio.sleep(LLM_PROBE_INTERVAL_S)
+                detected = await detect_local_llm()
+                if detected and paused[0]:
+                    nonlocal_backend[0] = detected
+                    paused[0] = False
+                    await send(json.dumps({"action": "set_paused", "paused": False}))
+                    logging.info(f"LLM backend detected ({detected['provider']}) — worker resumed.")
+                elif not detected and not paused[0]:
+                    paused[0] = True
+                    await send(json.dumps({"action": "set_paused", "paused": True}))
+                    logging.warning("LLM backend lost — worker paused.")
+
+        probe_task = asyncio.create_task(llm_probe())
 
         # Listen for dispatches; each assignment joins the pool.
         async for message_str in websocket:
@@ -319,6 +347,7 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
                 continue
             if message.get("type") == "error" and message.get("code") == "version_too_old":
                 logging.error(message.get("message"))
+                probe_task.cancel()
                 sys.exit(1)
             if message.get("type") == "task_assignment":
                 job = asyncio.create_task(process(message))
@@ -326,6 +355,12 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
                 job.add_done_callback(in_flight.discard)
 
     finally:
+        if probe_task is not None:
+            probe_task.cancel()
+            try:
+                await probe_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         # Graceful drain: let in-flight generations finish, then flush the
         # outbox (queued completion reports) through the writer before it
         # exits on the sentinel. Anything still pending is abandoned — the
@@ -352,15 +387,16 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
             pass
 
 
+LLM_PROBE_INTERVAL_S = 10  # how often to probe for LLM while paused
+
+
 async def run_worker():
     _reauthed = False
     while True:
-        # Auto-detect active local LLM before connecting to the broker
         active_backend = await detect_local_llm()
-        if not active_backend:
-            logging.warning("No local LLM backend detected (Ollama, LM Studio, or llama.cpp). Retrying search in 5s...")
-            await asyncio.sleep(5)
-            continue
+        start_paused = active_backend is None
+        if start_paused:
+            logging.warning("No local LLM backend detected — connecting to broker in paused mode.")
 
         auth = CodokenAuth(ROLE)
         try:
@@ -368,7 +404,7 @@ async def run_worker():
             logging.info(f"Connecting Worker to Codoken broker ({uri})...")
             async with websockets.connect(uri, additional_headers=extra_headers) as websocket:
                 logging.info("Successfully connected to the broker!")
-                await worker_session(websocket, auth, active_backend)
+                await worker_session(websocket, auth, active_backend, start_paused=start_paused)
         except WsConnectionClosed as e:
             logging.warning(f"Connection lost with broker ({e}). Reconnecting in {RECONNECT_DELAY}s...")
         except socket.gaierror:
