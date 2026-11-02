@@ -86,6 +86,11 @@ class CodokenAuthError(RuntimeError):
     pass
 
 
+class CodokenNetworkError(CodokenAuthError):
+    """Transient connectivity failure — retry without opening a browser."""
+    pass
+
+
 def _load_web_config() -> Optional[Dict[str, str]]:
     """Resolve the Firebase web app config; None when not configured."""
     path = os.environ.get("FIREBASE_WEB_CONFIG") or "firebase-web-config.json"
@@ -172,6 +177,8 @@ class CodokenAuth:
                          self.role, (self._uid or "?")[:12])
                 self._persist()
                 return
+            except CodokenNetworkError:
+                raise  # let the caller retry; don't fall through to reauth
             except Exception as exc:  # noqa: BLE001
                 log.warning("[CodokenAuth:%s] session restore failed (%s); "
                             "signing in fresh", self.role, exc)
@@ -278,11 +285,14 @@ class CodokenAuth:
     async def _refresh_id_token(self, api_key: str, refresh_token: str) -> None:
         """Exchange a refresh token for a fresh ID token."""
         url = FIREBASE_REFRESH_URL.format(api_key=api_key)
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(url, data={
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            })
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(url, data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                })
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise CodokenNetworkError(f"Network unavailable during token refresh: {exc}") from exc
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase token refresh failed ({r.status_code}): {r.text[:200]}"

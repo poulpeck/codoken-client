@@ -18,7 +18,7 @@ import codoken_config
 # codoken_auth is imported: it captures $CODOKEN_BROKER_WS at import time.
 codoken_config.apply_to_env("validator")
 
-from codoken_auth import CodokenAuth, CodokenAuthError  # noqa: E402
+from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError  # noqa: E402
 
 # ==========================================
 # 1. Zero-Config Environment Auto-Discovery
@@ -428,6 +428,9 @@ async def validator_client():
 
         except WsConnectionClosed:
             print("[Validator] Connection lost. Reconnecting in 5s...")
+            await asyncio.sleep(5)
+        except CodokenNetworkError as e:
+            print(f"[Validator] Network unavailable ({e}). Reconnecting in 5s...")
             await asyncio.sleep(5)
         except CodokenAuthError as e:
             if _reauthed:

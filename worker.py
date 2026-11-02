@@ -16,7 +16,7 @@ import codoken_config
 # codoken_auth is imported: it captures $CODOKEN_BROKER_WS at import time.
 codoken_config.apply_to_env("worker")
 
-from codoken_auth import CodokenAuth, CodokenAuthError  # noqa: E402
+from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError  # noqa: E402
 
 # Configure logging for clean output
 logging.basicConfig(
@@ -409,6 +409,8 @@ async def run_worker():
             logging.warning(f"Connection lost with broker ({e}). Reconnecting in {RECONNECT_DELAY}s...")
         except socket.gaierror:
             logging.error(f"Network or DNS issue. Reconnecting in {RECONNECT_DELAY}s...")
+        except CodokenNetworkError as e:
+            logging.warning(f"Network unavailable ({e}). Reconnecting in {RECONNECT_DELAY}s...")
         except CodokenAuthError as e:
             if _reauthed:
                 logging.error(f"Authentication failed after reauth: {e}. Exiting.")
