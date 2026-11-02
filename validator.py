@@ -363,6 +363,7 @@ async def validator_client():
     ensure_images_cached(client)
 
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
+    _reauthed = False
     while True:
         auth = CodokenAuth(ROLE, auth_store=auth_store)
         try:
@@ -429,13 +430,17 @@ async def validator_client():
             print("[Validator] Connection lost. Reconnecting in 5s...")
             await asyncio.sleep(5)
         except CodokenAuthError as e:
+            if _reauthed:
+                print(f"[Validator] Authentication failed after reauth: {e}. Exiting.")
+                sys.exit(1)
             print(f"[Validator] Authentication failed: {e}. Launching re-authentication...")
             try:
                 await CodokenAuth.reauth(auth_store=auth_store)
+                _reauthed = True
             except Exception as reauth_exc:
                 print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)
-            continue  # retry immediately with fresh credentials
+            continue  # retry once with fresh credentials
         except Exception as e:
             print(f"[Validator] Unexpected error: {e}. Reconnecting in 5s...")
             await asyncio.sleep(5)

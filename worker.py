@@ -353,6 +353,7 @@ async def worker_session(websocket, auth: CodokenAuth, backend: dict) -> None:
 
 
 async def run_worker():
+    _reauthed = False
     while True:
         # Auto-detect active local LLM before connecting to the broker
         active_backend = await detect_local_llm()
@@ -373,13 +374,17 @@ async def run_worker():
         except socket.gaierror:
             logging.error(f"Network or DNS issue. Reconnecting in {RECONNECT_DELAY}s...")
         except CodokenAuthError as e:
+            if _reauthed:
+                logging.error(f"Authentication failed after reauth: {e}. Exiting.")
+                sys.exit(1)
             logging.warning(f"Authentication failed: {e}. Launching re-authentication...")
             try:
                 await CodokenAuth.reauth()
+                _reauthed = True
             except Exception as reauth_exc:
                 logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)
-            continue  # retry immediately with fresh credentials
+            continue  # retry once with fresh credentials
         except Exception as e:
             logging.error(f"Unexpected error: {e}. Reconnecting in {RECONNECT_DELAY}s...")
         finally:
