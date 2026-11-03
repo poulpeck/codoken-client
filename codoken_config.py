@@ -49,7 +49,7 @@ ROLES = ("broker", "worker", "validator", "developer")
 # Must stay in sync with validator.py RUNTIME_CONFIG + LANGUAGE_ALIASES.
 SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "python", "javascript", "typescript", "golang", "go",
-    "rust", "cpp", "php", "ruby", "java",
+    "rust", "cpp", "php", "ruby", "java", "gdscript", "gd", "godot",
 )
 
 # key -> (environment variable, built-in default or None, roles that use it)
@@ -68,6 +68,7 @@ KEYS: Dict[str, tuple] = {
     "worker_parallel": ("CODOKEN_WORKER_PARALLEL", "2", frozenset({"worker"})),
     "worker_model": ("CODOKEN_WORKER_MODEL", None, frozenset({"worker"})),
     "docker_host": ("DOCKER_HOST", None, frozenset({"validator"})),
+    "validator_languages": ("CODOKEN_VALIDATOR_LANGUAGES", None, frozenset({"validator"})),
 }
 
 _OFF = ("", "off", "none", "0")

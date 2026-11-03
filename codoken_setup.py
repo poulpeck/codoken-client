@@ -53,17 +53,21 @@ import codoken_config
 BROKER_DEFAULT = "wss://broker.codoken.dev"
 USER_CONFIG = Path.home() / ".codoken" / "config.json"
 
-RUNTIME_IMAGES = [
-    "python:3.11-slim",
-    "node:18-slim",                   # javascript (typescript builds on top)
-    "gcc:latest",                     # cpp
-    "golang:alpine",                  # go
-    "rust:latest",                    # rust
-    "php:8.2-cli",                    # php
-    "ruby:3.2-slim",                  # ruby
-    "eclipse-temurin:21-jdk-alpine",  # java
-    "barichello/godot-ci:4.3",        # gdscript (Godot 4 headless, ~2 GB)
+# Ordered list of (language_key, image, approx_disk_size_mb, description)
+RUNTIME_INFO = [
+    ("python",     "python:3.11-slim",                 150,  "Python 3.11"),
+    ("javascript", "node:18-slim",                     180,  "JavaScript (Node 18)"),
+    ("typescript", "codoken-ts:1.0",                   200,  "TypeScript (built on Node 18)"),
+    ("cpp",        "gcc:latest",                       430,  "C++ (GCC)"),
+    ("golang",     "golang:alpine",                    330,  "Go (Alpine)"),
+    ("rust",       "rust:latest",                     1700,  "Rust"),
+    ("php",        "php:8.2-cli",                      380,  "PHP 8.2"),
+    ("ruby",       "ruby:3.2-slim",                    220,  "Ruby 3.2"),
+    ("java",       "eclipse-temurin:21-jdk-alpine",    350,  "Java 21 (Temurin)"),
+    ("gdscript",   "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
 ]
+
+RUNTIME_IMAGES = [image for _, image, _, _ in RUNTIME_INFO]
 
 # Images built locally from a base (not pulled from a registry).
 # The validator builds these automatically on first start.
@@ -372,7 +376,8 @@ async def wizard(defaults: bool) -> None:
                 "  the worker will detect it automatically."
             )
 
-    # -- Validator: detect container engine + pull images --
+    # -- Validator: detect container engine + pick languages + pull images --
+    selected_languages: list[str] = []
     if "validator" in roles:
         click.echo("\n-- Validator: container engine --")
         click.echo("The validator runs submitted code inside isolated containers.")
@@ -387,7 +392,6 @@ async def wizard(defaults: bool) -> None:
                     break
                 except Exception:
                     click.echo(f"  {cmd} is installed but the daemon is not running.")
-                    # On Mac, offer to start podman machine automatically
                     if cmd == "podman" and sys.platform == "darwin":
                         if click.confirm("  Start Podman machine now?", default=True):
                             click.echo("  Starting Podman machine (this may take a minute)...")
@@ -411,28 +415,90 @@ async def wizard(defaults: bool) -> None:
                 "  running. Start it and then re-run:  python codoken_setup.py check"
             )
         else:
-            click.echo(
-                f"  Note (Windows): Docker Desktop must have your Temp directory\n"
-                f"  drive listed under Settings -> Resources -> File Sharing,\n"
-                f"  otherwise sandbox volume mounts will fail."
-            ) if sys.platform == "win32" else None
+            if sys.platform == "win32":
+                click.echo(
+                    f"  Note (Windows): Docker Desktop must have your Temp directory\n"
+                    f"  drive listed under Settings -> Resources -> File Sharing,\n"
+                    f"  otherwise sandbox volume mounts will fail."
+                )
 
-            # Check which images are already present
-            missing_pulls = []
-            for image in RUNTIME_IMAGES:
-                result = subprocess.run([engine, "image", "inspect", image],
-                                        capture_output=True)
-                if result.returncode != 0:
-                    missing_pulls.append(image)
+            # -- Language selection --
+            click.echo("\n-- Validator: language runtimes --")
+            click.echo("Choose which languages this node will validate.")
+            click.echo("Each language requires a Docker image (one-time download).\n")
+            total_mb = sum(mb for _, _, mb, _ in RUNTIME_INFO)
+            click.echo(f"  {'Lang':<14} {'Image':<40} {'~Size':>7}  {'Status'}")
+            click.echo(f"  {'-'*14} {'-'*40} {'-'*7}  {'-'*10}")
+            already = {}
+            for lang, image, mb, desc in RUNTIME_INFO:
+                r = subprocess.run([engine, "image", "inspect", image], capture_output=True)
+                cached = r.returncode == 0
+                already[lang] = cached
+                status_str = "cached ✓" if cached else f"~{mb:,} MB"
+                click.echo(f"  {lang:<14} {image:<40} {status_str:>10}")
+
+            click.echo("")
+            if defaults:
+                selected_languages = [lang for lang, _, _, _ in RUNTIME_INFO]
+            else:
+                click.echo("  Options:")
+                click.echo("    all      — validate all languages (recommended)")
+                click.echo("    common   — python, javascript, typescript, cpp, golang, rust, java")
+                click.echo("    <list>   — comma-separated, e.g. python,javascript,golang")
+                click.echo("")
+                lang_input = click.prompt(
+                    "  Languages to support", default="all"
+                ).strip().lower()
+
+                all_keys = [lang for lang, _, _, _ in RUNTIME_INFO]
+                common = ["python", "javascript", "typescript", "cpp", "golang", "rust", "java"]
+
+                if lang_input == "all":
+                    selected_languages = all_keys
+                elif lang_input == "common":
+                    selected_languages = common
+                else:
+                    aliases = {"go": "golang", "js": "javascript", "ts": "typescript",
+                               "rb": "ruby", "gd": "gdscript", "godot": "gdscript"}
+                    selected_languages = []
+                    for tok in lang_input.split(","):
+                        tok = tok.strip()
+                        resolved = aliases.get(tok, tok)
+                        if resolved in all_keys:
+                            if resolved not in selected_languages:
+                                selected_languages.append(resolved)
+                        else:
+                            click.echo(f"  [WARN] Unknown language {tok!r} — skipped")
+                    if not selected_languages:
+                        click.echo("  No valid languages selected — defaulting to all.")
+                        selected_languages = all_keys
+
+            click.echo(f"\n  Selected ({len(selected_languages)}): {', '.join(selected_languages)}")
+            total_selected_mb = sum(mb for lang, _, mb, _ in RUNTIME_INFO if lang in selected_languages)
+            total_cached_mb   = sum(mb for lang, _, mb, _ in RUNTIME_INFO
+                                    if lang in selected_languages and already.get(lang))
+            to_download_mb    = total_selected_mb - total_cached_mb
+            if to_download_mb > 0:
+                click.echo(f"  Download required: ~{to_download_mb:,} MB")
+
+            # -- Pull / build selected images --
+            _build_targets = set(RUNTIME_BUILD_IMAGES.keys())
+            missing_pulls = [
+                image for lang, image, _, _ in RUNTIME_INFO
+                if lang in selected_languages and not already.get(lang)
+                and image not in _build_targets
+            ]
             missing_builds = {tag: spec for tag, spec in RUNTIME_BUILD_IMAGES.items()
                               if subprocess.run([engine, "image", "inspect", tag],
-                                                capture_output=True).returncode != 0}
+                                                capture_output=True).returncode != 0
+                              and any(lang in selected_languages
+                                      for lang, img, _, _ in RUNTIME_INFO if img == tag)}
 
             if not missing_pulls and not missing_builds:
-                click.echo("  Runtime images already present  ✓")
+                click.echo("  All selected runtime images already present  ✓")
             else:
                 pull = click.confirm(
-                    f"\n  Pull {len(missing_pulls + list(missing_builds))} missing runtime image(s) now?\n"
+                    f"\n  Pull {len(missing_pulls) + len(missing_builds)} missing image(s) now?\n"
                     f"  (one-time download — tasks run faster after this)",
                     default=True,
                 )
@@ -441,7 +507,7 @@ async def wizard(defaults: bool) -> None:
                     for image in missing_pulls:
                         click.echo(f"    {image} ...", nl=False)
                         try:
-                            subprocess.run([engine, "pull", image], check=True, timeout=300,
+                            subprocess.run([engine, "pull", image], check=True, timeout=600,
                                            capture_output=True)
                             click.echo(" done")
                         except Exception as e:
@@ -485,6 +551,10 @@ async def wizard(defaults: bool) -> None:
         "worker_parallel": "2",
         "worker_model": doc_model or "",
     }
+    if selected_languages:
+        all_keys = [lang for lang, _, _, _ in RUNTIME_INFO]
+        if sorted(selected_languages) != sorted(all_keys):
+            doc["validator_languages"] = ",".join(selected_languages)
     with open(USER_CONFIG, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
         fh.write("\n")
