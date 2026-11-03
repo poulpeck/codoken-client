@@ -183,6 +183,13 @@ RUNTIME_CONFIG = {
         "command": "godot --headless --script solution.gd",
         "mem_limit": "512m",
     },
+    "gdscript3": {
+        "image": "barichello/godot-ci:3.6.2",
+        "files": ("solution.gd",),
+        # Godot 3 headless: same SceneTree wrapper, different binary name.
+        "command": "godot3 --no-window --script solution.gd",
+        "mem_limit": "512m",
+    },
 }
 
 LANGUAGE_ALIASES = {
@@ -192,6 +199,10 @@ LANGUAGE_ALIASES = {
     "rb":       "ruby",
     "gd":       "gdscript",
     "godot":    "gdscript",
+    "gd3":      "gdscript3",
+    "godot3":   "gdscript3",
+    "gdscript4": "gdscript",
+    "godot4":   "gdscript",
 }
 
 # Spec 5.2: verdicts carry (status, stdout, exit_code). The broker hashes
@@ -319,7 +330,7 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 if test_stripped.startswith("<?php"):
                     test_stripped = test_stripped[5:].lstrip("\n")
                 full_code = f"<?php\n{generated_code}\n{test_stripped}\n"
-            elif key == "gdscript":
+            elif key in ("gdscript", "gdscript3"):
                 # Godot 4 headless requires a SceneTree subclass with _init().
                 # Generated code is plain GDScript functions; test_code uses
                 # assert statements. We wrap both in a minimal harness that

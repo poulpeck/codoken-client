@@ -65,6 +65,7 @@ RUNTIME_INFO = [
     ("ruby",       "ruby:3.2-slim",                    220,  "Ruby 3.2"),
     ("java",       "eclipse-temurin:21-jdk-alpine",    350,  "Java 21 (Temurin)"),
     ("gdscript",   "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
+    ("gdscript3",  "barichello/godot-ci:3.6.2",        1610,  "GDScript (Godot 3 headless)"),
 ]
 
 RUNTIME_IMAGES = [image for _, image, _, _ in RUNTIME_INFO]

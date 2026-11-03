@@ -49,7 +49,9 @@ ROLES = ("broker", "worker", "validator", "developer")
 # Must stay in sync with validator.py RUNTIME_CONFIG + LANGUAGE_ALIASES.
 SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "python", "javascript", "typescript", "golang", "go",
-    "rust", "cpp", "php", "ruby", "java", "gdscript", "gd", "godot",
+    "rust", "cpp", "php", "ruby", "java",
+    "gdscript", "gdscript4", "gd", "godot", "godot4",
+    "gdscript3", "gd3", "godot3",
 )
 
 # key -> (environment variable, built-in default or None, roles that use it)
