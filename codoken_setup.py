@@ -1079,7 +1079,7 @@ def _probe_pause_state(rep: Report) -> None:
                  record=False)
 
 
-
+async def doctor(roles: str, no_network: bool) -> int:
     role_set = {r.strip() for r in roles.split(",") if r.strip()}
     if not role_set:
         role_set = set(codoken_config.ROLES)
