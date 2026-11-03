@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import os
+import socket
 import sys
 import subprocess
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 import docker
 import websockets
-from websockets.exceptions import ConnectionClosed as WsConnectionClosed
+from websockets.exceptions import ConnectionClosed as WsConnectionClosed, InvalidStatus
 
 import codoken_config
 
@@ -108,6 +109,15 @@ def auto_configure_docker_host():
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "validator"
 VERSION = "1.3.0"
+
+RECONNECT_DELAY = 5
+RECONNECT_MAX   = 300
+
+PAUSE_FILE = os.path.join(os.path.expanduser("~"), ".codoken", "paused")
+
+
+def _backoff(failures: int) -> float:
+    return min(RECONNECT_DELAY * (2 ** failures), RECONNECT_MAX)
 
 # Polyglot runtime map (spec 3.4). `files` is the file layout written into
 # the read-only /app mount: one file = solution + harness concatenated
@@ -364,7 +374,26 @@ async def validator_client():
 
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     _reauthed = False
+    consecutive_failures = 0
     while True:
+        # Pause file check — user ran `codoken pause`
+        if os.path.exists(PAUSE_FILE):
+            try:
+                import json as _j, datetime as _dt
+                data = _j.loads(open(PAUSE_FILE).read())
+                resume_at = data.get("resume_at")
+                if resume_at and _dt.datetime.now() >= _dt.datetime.fromisoformat(resume_at):
+                    os.unlink(PAUSE_FILE)
+                    print("[Validator] Pause expired — resuming.")
+                else:
+                    print("[Validator] Paused (run `codoken resume` to restart). Sleeping 60s...")
+                    await asyncio.sleep(60)
+                    continue
+            except Exception:
+                print("[Validator] Paused. Sleeping 60s...")
+                await asyncio.sleep(60)
+                continue
+
         auth = CodokenAuth(ROLE, auth_store=auth_store)
         try:
             uri, extra_headers = await auth.connect_config()
@@ -375,6 +404,7 @@ async def validator_client():
                     "version": VERSION,
                 }))
                 print("[Validator] Successfully connected and listening for task reviews...")
+                consecutive_failures = 0  # reset backoff on successful connect
 
                 # Keep the Firebase ID token fresh for the life of the session
                 # (no-op in shared_secret mode).
@@ -427,11 +457,29 @@ async def validator_client():
                         await websocket.send(json.dumps(verdict_payload))
 
         except WsConnectionClosed:
-            print("[Validator] Connection lost. Reconnecting in 5s...")
-            await asyncio.sleep(5)
-        except CodokenNetworkError as e:
-            print(f"[Validator] Network unavailable ({e}). Reconnecting in 5s...")
-            await asyncio.sleep(5)
+            consecutive_failures += 1
+            print(f"[Validator] Connection lost. Reconnecting in {_backoff(consecutive_failures):.0f}s...")
+        except (socket.gaierror, OSError, CodokenNetworkError) as e:
+            consecutive_failures += 1
+            delay = _backoff(consecutive_failures)
+            print(f"[Validator] Broker unreachable ({type(e).__name__}). Retrying in {delay:.0f}s...")
+        except InvalidStatus as e:
+            if e.response.status_code in (401, 403):
+                if _reauthed:
+                    print("[Validator] Authentication failed after reauth. Exiting.")
+                    sys.exit(1)
+                print("[Validator] Authentication rejected by broker. Launching re-authentication...")
+                try:
+                    await CodokenAuth.reauth(auth_store=auth_store)
+                    _reauthed = True
+                except Exception as reauth_exc:
+                    print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
+                    sys.exit(1)
+                consecutive_failures = 0
+                continue
+            else:
+                consecutive_failures += 1
+                print(f"[Validator] Broker returned HTTP {e.response.status_code}. Retrying in {_backoff(consecutive_failures):.0f}s...")
         except CodokenAuthError as e:
             if _reauthed:
                 print(f"[Validator] Authentication failed after reauth: {e}. Exiting.")
@@ -443,12 +491,15 @@ async def validator_client():
             except Exception as reauth_exc:
                 print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)
-            continue  # retry once with fresh credentials
+            consecutive_failures = 0
+            continue
         except Exception as e:
-            print(f"[Validator] Unexpected error: {e}. Reconnecting in 5s...")
-            await asyncio.sleep(5)
+            consecutive_failures += 1
+            print(f"[Validator] Unexpected error: {e}. Reconnecting in {_backoff(consecutive_failures):.0f}s...")
         finally:
             auth.stop()
+
+        await asyncio.sleep(_backoff(consecutive_failures))
 
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):

@@ -8,7 +8,7 @@ import time
 from typing import Optional
 import httpx
 import websockets
-from websockets.exceptions import ConnectionClosed as WsConnectionClosed
+from websockets.exceptions import ConnectionClosed as WsConnectionClosed, InvalidStatus
 
 import codoken_config
 
@@ -59,6 +59,14 @@ STRICT RULES:
 """
 
 RECONNECT_DELAY = 5
+RECONNECT_MAX   = 300  # 5 min ceiling for backoff
+
+PAUSE_FILE = os.path.join(os.path.expanduser("~"), ".codoken", "paused")
+
+
+def _backoff(failures: int) -> float:
+    """Exponential backoff: 5s, 10s, 20s, 40s … capped at RECONNECT_MAX."""
+    return min(RECONNECT_DELAY * (2 ** failures), RECONNECT_MAX)
 
 # Spec 3.3: how many prompt completions to run concurrently. A local LLM
 # (Ollama / LM Studio / llama.cpp) usually serves 2 comfortably; the worker
@@ -392,7 +400,26 @@ LLM_PROBE_INTERVAL_S = 10  # how often to probe for LLM while paused
 
 async def run_worker():
     _reauthed = False
+    consecutive_failures = 0
     while True:
+        # Pause file check — user ran `codoken pause`
+        if os.path.exists(PAUSE_FILE):
+            try:
+                import json as _j, datetime as _dt
+                data = _j.loads(open(PAUSE_FILE).read())
+                resume_at = data.get("resume_at")
+                if resume_at and _dt.datetime.now() >= _dt.datetime.fromisoformat(resume_at):
+                    os.unlink(PAUSE_FILE)
+                    logging.info("Pause expired — resuming.")
+                else:
+                    logging.info("Worker paused (run `codoken resume` to restart). Sleeping 60s...")
+                    await asyncio.sleep(60)
+                    continue
+            except Exception:
+                logging.info("Worker paused. Sleeping 60s...")
+                await asyncio.sleep(60)
+                continue
+
         active_backend = await detect_local_llm()
         start_paused = active_backend is None
         if start_paused:
@@ -404,13 +431,34 @@ async def run_worker():
             logging.info(f"Connecting Worker to Codoken broker ({uri})...")
             async with websockets.connect(uri, additional_headers=extra_headers) as websocket:
                 logging.info("Successfully connected to the broker!")
+                consecutive_failures = 0  # reset backoff on successful connect
                 await worker_session(websocket, auth, active_backend, start_paused=start_paused)
         except WsConnectionClosed as e:
-            logging.warning(f"Connection lost with broker ({e}). Reconnecting in {RECONNECT_DELAY}s...")
-        except socket.gaierror:
-            logging.error(f"Network or DNS issue. Reconnecting in {RECONNECT_DELAY}s...")
-        except CodokenNetworkError as e:
-            logging.warning(f"Network unavailable ({e}). Reconnecting in {RECONNECT_DELAY}s...")
+            consecutive_failures += 1
+            logging.warning(f"Connection lost with broker ({e}). Reconnecting in {_backoff(consecutive_failures):.0f}s...")
+        except (socket.gaierror, OSError, CodokenNetworkError) as e:
+            # DNS failure, connection refused, network down, broker unreachable — never reauth
+            consecutive_failures += 1
+            delay = _backoff(consecutive_failures)
+            logging.warning(f"Broker unreachable ({type(e).__name__}). Retrying in {delay:.0f}s...")
+        except InvalidStatus as e:
+            # Broker explicitly rejected the connection — only 401/403 warrants reauth
+            if e.response.status_code in (401, 403):
+                if _reauthed:
+                    logging.error("Authentication failed after reauth. Exiting.")
+                    sys.exit(1)
+                logging.warning("Authentication rejected by broker. Launching re-authentication...")
+                try:
+                    await CodokenAuth.reauth()
+                    _reauthed = True
+                except Exception as reauth_exc:
+                    logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
+                    sys.exit(1)
+                consecutive_failures = 0
+                continue
+            else:
+                consecutive_failures += 1
+                logging.error(f"Broker returned HTTP {e.response.status_code}. Retrying in {_backoff(consecutive_failures):.0f}s...")
         except CodokenAuthError as e:
             if _reauthed:
                 logging.error(f"Authentication failed after reauth: {e}. Exiting.")
@@ -422,13 +470,15 @@ async def run_worker():
             except Exception as reauth_exc:
                 logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)
-            continue  # retry once with fresh credentials
+            consecutive_failures = 0
+            continue
         except Exception as e:
-            logging.error(f"Unexpected error: {e}. Reconnecting in {RECONNECT_DELAY}s...")
+            consecutive_failures += 1
+            logging.error(f"Unexpected error: {e}. Reconnecting in {_backoff(consecutive_failures):.0f}s...")
         finally:
             auth.stop()
 
-        await asyncio.sleep(RECONNECT_DELAY)
+        await asyncio.sleep(_backoff(consecutive_failures))
 
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):

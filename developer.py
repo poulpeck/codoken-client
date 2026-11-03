@@ -620,5 +620,68 @@ def validate_cmd(manifest: str, json_mode: bool) -> None:
     sys.exit(0)
 
 
+_PAUSE_FILE = Path.home() / ".codoken" / "paused"
+
+
+@cli.command(name="pause")
+@click.option("--until", "until_time", default=None, metavar="HH:MM",
+              help="Resume automatically at this local time (e.g. 09:00).")
+def pause_cmd(until_time: Optional[str]) -> None:
+    """Pause the local worker/validator — stops reconnect attempts."""
+    import datetime
+    import json as _json
+    _PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict = {}
+    if until_time:
+        try:
+            h, m = until_time.split(":")
+            now = datetime.datetime.now()
+            resume_dt = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+            if resume_dt <= now:
+                resume_dt += datetime.timedelta(days=1)
+            payload["resume_at"] = resume_dt.isoformat()
+        except (ValueError, AttributeError):
+            raise click.BadParameter(f"Expected HH:MM, got {until_time!r}", param_hint="--until")
+    _PAUSE_FILE.write_text(_json.dumps(payload))
+    msg = "Paused."
+    if payload.get("resume_at"):
+        msg += f" Auto-resume at {payload['resume_at'][:16]}."
+    click.echo(msg)
+
+
+@cli.command(name="resume")
+def resume_cmd() -> None:
+    """Resume the local worker/validator after a pause."""
+    if _PAUSE_FILE.exists():
+        _PAUSE_FILE.unlink()
+        click.echo("Resumed.")
+    else:
+        click.echo("Not paused.")
+
+
+@cli.command(name="node-status")
+def node_status_cmd() -> None:
+    """Show local worker/validator pause state."""
+    import datetime
+    import json as _json
+    if not _PAUSE_FILE.exists():
+        click.echo("Running (not paused).")
+        return
+    try:
+        data = _json.loads(_PAUSE_FILE.read_text())
+    except Exception:
+        data = {}
+    resume_at = data.get("resume_at")
+    if resume_at:
+        resume_dt = datetime.datetime.fromisoformat(resume_at)
+        if datetime.datetime.now() >= resume_dt:
+            _PAUSE_FILE.unlink()
+            click.echo("Running (pause expired, auto-resumed).")
+        else:
+            click.echo(f"Paused until {resume_at[:16]}.")
+    else:
+        click.echo("Paused indefinitely. Run `codoken resume` to restart.")
+
+
 if __name__ == "__main__":
     cli()
