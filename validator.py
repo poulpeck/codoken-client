@@ -186,8 +186,9 @@ RUNTIME_CONFIG = {
     "gdscript3": {
         "image": "barichello/godot-ci:3.6.2",
         "files": ("solution.gd",),
-        # Godot 3 headless: same SceneTree wrapper, different binary name.
-        "command": "godot3 --no-window --script solution.gd",
+        # Godot 3 headless: binary is 'godot' (same as v4 in this image).
+        # --video-driver Dummy suppresses the display; -s runs the script.
+        "command": "godot --video-driver Dummy --script solution.gd",
         "mem_limit": "512m",
     },
 }
