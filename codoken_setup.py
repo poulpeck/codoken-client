@@ -17,6 +17,12 @@ The wizard:
   5. Writes ~/.codoken/config.json
   6. Verifies the connection to the broker
   7. Optionally installs a background service
+
+Pause / resume (broker unreachable or going offline):
+    codoken pause                pause worker + validator indefinitely
+    codoken pause --until 09:00  pause until 9 am (auto-resumes)
+    codoken resume               resume immediately
+    codoken node-status          show current pause state
 """
 
 from __future__ import annotations
@@ -355,14 +361,14 @@ async def wizard(defaults: bool) -> None:
             doc_model = None
             click.echo(
                 "  [WARN] No local LLM detected — none of the above ports responded.\n"
-                "  The worker will keep retrying every 5 s once started, so you can\n"
-                "  install the LLM after setup and it will connect automatically.\n\n"
+                "  The worker will connect to the broker in paused mode and probe\n"
+                "  every 10 s. As soon as an LLM starts it will resume automatically.\n\n"
                 "  Recommended options:\n"
                 "    Ollama      https://ollama.ai          (free, CLI-first)\n"
                 "    LM Studio   https://lmstudio.ai        (free, GUI, easy model download)\n"
                 "    llama.cpp   https://github.com/ggerganov/llama.cpp  (advanced)\n\n"
-                "  After installing, load any GGUF model and make sure the server is\n"
-                "  running before starting the worker."
+                "  After installing, load any GGUF model and start the server —\n"
+                "  the worker will detect it automatically."
             )
 
     # -- Validator: detect container engine + pull images --
@@ -571,9 +577,13 @@ async def wizard(defaults: bool) -> None:
     click.echo("")
     click.echo("  Track your earnings:   https://codoken.io/dashboard.html")
     click.echo("  Useful commands:")
-    click.echo("    python codoken_setup.py check            — verify everything")
+    click.echo("    codoken node-status              — show pause state")
+    click.echo("    codoken pause                    — pause until you run resume")
+    click.echo("    codoken pause --until 09:00      — pause until 9 am")
+    click.echo("    codoken resume                   — resume immediately")
+    click.echo("    python codoken_setup.py check    — verify everything")
     click.echo("    python codoken_setup.py service install  — set up auto-start")
-    click.echo("    python codoken_setup.py                  — re-run this wizard")
+    click.echo("    python codoken_setup.py          — re-run this wizard")
     click.echo("")
     click.echo("=" * 60)
     click.echo("")
@@ -1038,7 +1048,38 @@ def _probe_services(rep: Report) -> None:
                 rep.warn(f"service ({role})", f"not installed or unknown state ({status})")
 
 
-async def doctor(roles: str, no_network: bool) -> int:
+def _probe_pause_state(rep: Report) -> None:
+    """Warn if the node is currently paused via the pause file."""
+    pause_file = Path.home() / ".codoken" / "paused"
+    if not pause_file.exists():
+        rep.ok("pause state", "running")
+        return
+    try:
+        data = json.loads(pause_file.read_text())
+    except Exception:
+        data = {}
+    import datetime
+    resume_at = data.get("resume_at")
+    if resume_at:
+        try:
+            resume_dt = datetime.datetime.fromisoformat(resume_at)
+            if datetime.datetime.now() >= resume_dt:
+                pause_file.unlink()
+                rep.ok("pause state", "running (pause expired, auto-cleared)")
+                return
+            rep.warn("pause state",
+                     f"paused until {resume_at[:16]} — run `codoken resume` to cancel",
+                     record=False)
+        except Exception:
+            rep.warn("pause state", f"paused (unreadable resume_at) — run `codoken resume`",
+                     record=False)
+    else:
+        rep.warn("pause state",
+                 "paused indefinitely — run `codoken resume` to restart",
+                 record=False)
+
+
+
     role_set = {r.strip() for r in roles.split(",") if r.strip()}
     if not role_set:
         role_set = set(codoken_config.ROLES)
@@ -1074,6 +1115,7 @@ async def doctor(roles: str, no_network: bool) -> int:
 
     print("services")
     _probe_services(rep)
+    _probe_pause_state(rep)
 
     print()
     if rep.failures:
