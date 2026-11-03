@@ -331,35 +331,40 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                     test_stripped = test_stripped[5:].lstrip("\n")
                 full_code = f"<?php\n{generated_code}\n{test_stripped}\n"
             elif key in ("gdscript", "gdscript3"):
-                # Godot 4 headless requires a SceneTree subclass with _init().
-                # Generated code is plain GDScript functions; test_code uses
-                # assert statements. We wrap both in a minimal harness that
-                # prints PASS/FAIL and exits cleanly.
+                # Godot requires consistent indentation across the file.
+                # The LLM typically outputs spaces; we normalise generated_code
+                # to spaces (4-space tabs) then build the harness with spaces too.
+                def _tabs_to_spaces(src, n=4):
+                    return "\n".join(
+                        line.replace("\t", " " * n) if line.startswith("\t") else line
+                        for line in src.splitlines()
+                    )
+                gen_normalised = _tabs_to_spaces(generated_code)
                 full_code = (
                     "extends SceneTree\n\n"
-                    f"{generated_code}\n\n"
+                    f"{gen_normalised}\n\n"
                     "func _init():\n"
-                    "\tvar _failed := false\n"
-                    "\tvar _errors := []\n"
+                    "    var _failed := false\n"
+                    "    var _errors := []\n"
                 )
                 for line in test_code.splitlines():
                     stripped = line.strip()
                     if stripped.startswith("assert "):
                         expr = stripped[len("assert "):]
                         full_code += (
-                            f"\tif not ({expr}):\n"
-                            f'\t\t_errors.append("FAIL: assert {expr.replace(chr(34), chr(39))}")\n'
-                            f"\t\t_failed = true\n"
+                            f"    if not ({expr}):\n"
+                            f'        _errors.append("FAIL: assert {expr.replace(chr(34), chr(39))}")\n'
+                            f"        _failed = true\n"
                         )
                     elif stripped:
-                        full_code += f"\t{stripped}\n"
+                        full_code += f"    {stripped}\n"
                 full_code += (
-                    "\tif _failed:\n"
-                    "\t\tfor e in _errors: print(e)\n"
-                    "\t\tquit(1)\n"
-                    "\telse:\n"
-                    '\t\tprint("All assertions passed.")\n'
-                    "\t\tquit(0)\n"
+                    "    if _failed:\n"
+                    "        for e in _errors: print(e)\n"
+                    "        quit(1)\n"
+                    "    else:\n"
+                    '        print("All assertions passed.")\n'
+                    "        quit(0)\n"
                 )
             else:
                 full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
