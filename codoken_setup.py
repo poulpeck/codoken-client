@@ -62,6 +62,7 @@ RUNTIME_IMAGES = [
     "php:8.2-cli",                    # php
     "ruby:3.2-slim",                  # ruby
     "eclipse-temurin:21-jdk-alpine",  # java
+    "barichello/godot-ci:4.3",        # gdscript (Godot 4 headless, ~2 GB)
 ]
 
 # Images built locally from a base (not pulled from a registry).

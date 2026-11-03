@@ -176,13 +176,22 @@ RUNTIME_CONFIG = {
         # Compile both files together, run Test which calls Solution methods.
         "command": "javac -d /tmp Solution.java Test.java && java -ea -cp /tmp Test"
     },
+    "gdscript": {
+        "image": "barichello/godot-ci:4.3",
+        "files": ("solution.gd",),
+        # Godot 4 headless: script must extend SceneTree; wrapper adds boilerplate.
+        "command": "godot --headless --script solution.gd",
+        "mem_limit": "512m",
+    },
 }
 
 LANGUAGE_ALIASES = {
-    "go":  "golang",
-    "js":  "javascript",
-    "ts":  "typescript",
-    "rb":  "ruby",
+    "go":       "golang",
+    "js":       "javascript",
+    "ts":       "typescript",
+    "rb":       "ruby",
+    "gd":       "gdscript",
+    "godot":    "gdscript",
 }
 
 # Spec 5.2: verdicts carry (status, stdout, exit_code). The broker hashes
@@ -310,6 +319,37 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 if test_stripped.startswith("<?php"):
                     test_stripped = test_stripped[5:].lstrip("\n")
                 full_code = f"<?php\n{generated_code}\n{test_stripped}\n"
+            elif key == "gdscript":
+                # Godot 4 headless requires a SceneTree subclass with _init().
+                # Generated code is plain GDScript functions; test_code uses
+                # assert statements. We wrap both in a minimal harness that
+                # prints PASS/FAIL and exits cleanly.
+                full_code = (
+                    "extends SceneTree\n\n"
+                    f"{generated_code}\n\n"
+                    "func _init():\n"
+                    "\tvar _failed := false\n"
+                    "\tvar _errors := []\n"
+                )
+                for line in test_code.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("assert "):
+                        expr = stripped[len("assert "):]
+                        full_code += (
+                            f"\tif not ({expr}):\n"
+                            f'\t\t_errors.append("FAIL: assert {expr.replace(chr(34), chr(39))}")\n'
+                            f"\t\t_failed = true\n"
+                        )
+                    elif stripped:
+                        full_code += f"\t{stripped}\n"
+                full_code += (
+                    "\tif _failed:\n"
+                    "\t\tfor e in _errors: print(e)\n"
+                    "\t\tquit(1)\n"
+                    "\telse:\n"
+                    '\t\tprint("All assertions passed.")\n'
+                    "\t\tquit(0)\n"
+                )
             else:
                 full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
             contents = {files[0]: full_code}
