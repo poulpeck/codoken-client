@@ -314,7 +314,8 @@ async def worker_session(websocket, auth: CodokenAuth, backend: Optional[dict], 
             "version": VERSION,
             "capabilities": ["python", "cpp", "javascript", "typescript",
                              "rust", "golang", "php", "ruby", "java",
-                             "gdscript", "gdscript3"],
+                             "gdscript", "gdscript3",
+                             "sqlite", "postgresql"],
             "max_concurrent": MAX_PARALLEL,
         }))
 

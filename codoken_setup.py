@@ -64,8 +64,10 @@ RUNTIME_INFO = [
     ("php",        "php:8.2-cli",                      380,  "PHP 8.2"),
     ("ruby",       "ruby:3.2-slim",                    220,  "Ruby 3.2"),
     ("java",       "eclipse-temurin:21-jdk-alpine",    350,  "Java 21 (Temurin)"),
-    ("gdscript",   "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
-    ("gdscript3",  "barichello/godot-ci:3.6.2",        1610,  "GDScript (Godot 3 headless)"),
+    ("gdscript",    "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
+    ("gdscript3",   "barichello/godot-ci:3.6.2",        1610,  "GDScript (Godot 3 headless)"),
+    ("sqlite",      "python:3.12-slim",                  150,  "SQLite (in-memory, Python harness)"),
+    ("postgresql",  "codoken-pg:1.0",                    450,  "PostgreSQL 16 (sandboxed instance)"),
 ]
 
 RUNTIME_IMAGES = [image for _, image, _, _ in RUNTIME_INFO]
@@ -76,6 +78,10 @@ RUNTIME_BUILD_IMAGES = {
     "codoken-ts:latest": {
         "base": "node:18-slim",
         "description": "TypeScript (ts-node pre-installed)",
+    },
+    "codoken-pg:1.0": {
+        "base": "postgres:16-alpine",
+        "description": "PostgreSQL 16 with Python 3 harness runner",
     },
 }
 

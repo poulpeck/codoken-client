@@ -191,6 +191,21 @@ RUNTIME_CONFIG = {
         "command": "godot --video-driver Dummy --script solution.gd",
         "mem_limit": "512m",
     },
+    "sqlite": {
+        "image": "python:3.12-slim",
+        "files": ("solution.py",),
+        "command": "python solution.py",
+    },
+    "postgresql": {
+        "image": "codoken-pg:1.0",
+        "files": ("solution.py",),
+        "command": "python3 solution.py",
+        "mem_limit": "512m",
+        "build": {
+            "base": "postgres:16-alpine",
+            "run": "apk add --no-cache python3",
+        },
+    },
 }
 
 LANGUAGE_ALIASES = {
@@ -204,6 +219,9 @@ LANGUAGE_ALIASES = {
     "godot3":   "gdscript3",
     "gdscript4": "gdscript",
     "godot4":   "gdscript",
+    "sql":      "sqlite",
+    "postgres": "postgresql",
+    "psql":     "postgresql",
 }
 
 # Spec 5.2: verdicts carry (status, stdout, exit_code). The broker hashes
@@ -290,6 +308,83 @@ def ensure_images_cached(client):
 # ==========================================
 # 4. Sandboxed Execution Engine
 # ==========================================
+
+def _sqlite_harness(generated_code: str, test_code: str) -> str:
+    import base64
+    gen_b64 = base64.b64encode(generated_code.encode()).decode()
+    tst_b64 = base64.b64encode(test_code.encode()).decode()
+    return (
+        "import sqlite3, sys, base64\n"
+        "conn = sqlite3.connect(':memory:')\n"
+        "conn.row_factory = sqlite3.Row\n"
+        "cur = conn.cursor()\n"
+        f"cur.executescript(base64.b64decode({gen_b64!r}).decode())\n"
+        f"stmts = [s.strip() for s in base64.b64decode({tst_b64!r}).decode().split(';') if s.strip()]\n"
+        "failed = False\n"
+        "for stmt in stmts:\n"
+        "    cur.execute(stmt)\n"
+        "    for row in cur.fetchall():\n"
+        "        keys = row.keys()\n"
+        "        ok = row['ok'] if 'ok' in keys else 1\n"
+        "        if ok not in (1, True, '1', 't'):\n"
+        "            got = row['got'] if 'got' in keys else '?'\n"
+        "            exp = row['expected'] if 'expected' in keys else '?'\n"
+        "            print(f'FAIL: got={got!r} expected={exp!r}')\n"
+        "            failed = True\n"
+        "        else:\n"
+        "            print('PASS')\n"
+        "conn.close()\n"
+        "if failed: sys.exit(1)\n"
+        "print('ALL TESTS PASSED')\n"
+    )
+
+
+def _postgresql_harness(generated_code: str, test_code: str) -> str:
+    import base64
+    gen_b64 = base64.b64encode(generated_code.encode()).decode()
+    tst_b64 = base64.b64encode(test_code.encode()).decode()
+    return (
+        "import subprocess, sys, base64, csv, io, time, os\n"
+        f"gen = base64.b64decode({gen_b64!r}).decode()\n"
+        f"tst = base64.b64decode({tst_b64!r}).decode()\n"
+        "os.makedirs('/tmp/pgdata', exist_ok=True)\n"
+        "r = subprocess.run(['initdb','-D','/tmp/pgdata','-U','postgres',\n"
+        "    '--auth=trust','--no-locale','--encoding=UTF8'], capture_output=True, text=True)\n"
+        "if r.returncode != 0: print(r.stderr); sys.exit(1)\n"
+        "subprocess.run(['pg_ctl','-D','/tmp/pgdata','-l','/tmp/pg.log',\n"
+        "    '-o','-k /tmp','start'], capture_output=True)\n"
+        "for _ in range(20):\n"
+        "    if subprocess.run(['pg_isready','-h','/tmp','-U','postgres'],\n"
+        "        capture_output=True).returncode == 0: break\n"
+        "    time.sleep(0.5)\n"
+        "PSQL = ['psql','-h','/tmp','-U','postgres']\n"
+        "with open('/tmp/setup.sql','w') as f: f.write(gen)\n"
+        "r = subprocess.run(PSQL + ['-f','/tmp/setup.sql'], capture_output=True, text=True)\n"
+        "if r.returncode != 0:\n"
+        "    print(r.stderr)\n"
+        "    subprocess.run(['pg_ctl','-D','/tmp/pgdata','stop','-m','fast'], capture_output=True)\n"
+        "    sys.exit(1)\n"
+        "stmts = [s.strip() for s in tst.split(';') if s.strip()]\n"
+        "failed = False\n"
+        "for stmt in stmts:\n"
+        "    r = subprocess.run(PSQL + ['--csv','-c',stmt+';'], capture_output=True, text=True)\n"
+        "    if r.returncode != 0:\n"
+        "        print(f'ERROR: {r.stderr.strip()}')\n"
+        "        failed = True\n"
+        "        continue\n"
+        "    for row in csv.DictReader(io.StringIO(r.stdout)):\n"
+        "        ok = row.get('ok','')\n"
+        "        if ok != 't':\n"
+        "            print(f'FAIL: got={row.get(\"got\",\"?\")!r} expected={row.get(\"expected\",\"?\")!r}')\n"
+        "            failed = True\n"
+        "        else:\n"
+        "            print('PASS')\n"
+        "subprocess.run(['pg_ctl','-D','/tmp/pgdata','stop','-m','fast'], capture_output=True)\n"
+        "if failed: sys.exit(1)\n"
+        "print('ALL TESTS PASSED')\n"
+    )
+
+
 def run_sandboxed_test(client, language: str, generated_code: str, test_code: str) -> tuple[str, str, str, int | None]:
     """Run the generated code against the test harness in a sandboxed
     container. Returns (status, details, stdout, exit_code) where `stdout`
@@ -367,6 +462,10 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                     '        print("All assertions passed.")\n'
                     "        quit(0)\n"
                 )
+            elif key == "sqlite":
+                full_code = _sqlite_harness(generated_code, test_code)
+            elif key == "postgresql":
+                full_code = _postgresql_harness(generated_code, test_code)
             else:
                 full_code = f"{generated_code}\n\n{test_code}" if test_code else generated_code
             contents = {files[0]: full_code}
