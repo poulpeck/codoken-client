@@ -153,12 +153,14 @@ RUNTIME_CONFIG = {
         "files": ("solution.rs",),
         "command": "rustc solution.rs -o /tmp/solution && /tmp/solution",
         "mem_limit": "512m",
+        "timeout": 180,
     },
     "golang": {
         "image": "golang:alpine",
         "files": ("solution.go",),
         "command": "go run solution.go",
         "mem_limit": "512m",
+        "timeout": 120,
     },
     "php": {
         "image": "php:8.2-cli",
@@ -179,17 +181,16 @@ RUNTIME_CONFIG = {
     "gdscript": {
         "image": "barichello/godot-ci:4.3",
         "files": ("solution.gd",),
-        # Godot 4 headless: script must extend SceneTree; wrapper adds boilerplate.
         "command": "godot --headless --script solution.gd",
         "mem_limit": "512m",
+        "timeout": 90,
     },
     "gdscript3": {
         "image": "barichello/godot-ci:3.6.2",
         "files": ("solution.gd",),
-        # Godot 3 headless: binary is 'godot' (same as v4 in this image).
-        # --video-driver Dummy suppresses the display; -s runs the script.
         "command": "godot --video-driver Dummy --script solution.gd",
         "mem_limit": "512m",
+        "timeout": 90,
     },
     "sqlite": {
         "image": "python:3.12-slim",
@@ -201,6 +202,7 @@ RUNTIME_CONFIG = {
         "files": ("solution.py",),
         "command": "python3 solution.py",
         "mem_limit": "512m",
+        "timeout": 60,
         "build": {
             "base": "postgres:16-alpine",
             "run": "apk add --no-cache python3",
@@ -492,8 +494,9 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 security_opt=["no-new-privileges:true"],
                 read_only=True,
                 tmpfs={"/tmp": "size=128m,mode=1777"},
+                pids_limit=64,
             )
-            result = container.wait()
+            result = container.wait(timeout=config.get("timeout", 120))
             exit_code = result.get("StatusCode", 0) if isinstance(result, dict) else 0
             logs = container.logs(stdout=True, stderr=True).decode("utf-8", "replace")
             container.remove()
@@ -503,14 +506,19 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 ), logs[:MAX_STDOUT_CHARS], exit_code
             return "approved", logs[-2048:], logs[:MAX_STDOUT_CHARS], exit_code
 
-        except docker.errors.ContainerError as ce:
-            logs = ce.container.logs(stdout=True, stderr=True).decode("utf-8", "replace")
-            ce.container.remove()
-            return "rejected", (
-                f"Execution failed (Exit Code {ce.exit_status}):\n{logs[-2048:]}"
-            ), logs[:MAX_STDOUT_CHARS], ce.exit_status
         except Exception as ex:
-            return "rejected", f"Sandbox execution error: {str(ex)}", "", None
+            # Catch timeout (requests.exceptions.ReadTimeout) and all other errors.
+            # Best-effort cleanup — container may or may not still exist.
+            try:
+                container.kill()
+                container.remove()
+            except Exception:
+                pass
+            msg = str(ex)
+            if "Read timed out" in msg or "ReadTimeout" in type(ex).__name__:
+                limit = config.get("timeout", 120)
+                return "rejected", f"Execution timed out after {limit}s", "", None
+            return "rejected", f"Sandbox execution error: {msg}", "", None
 
 # ==========================================
 # 5. WebSocket Client & Task Loop
