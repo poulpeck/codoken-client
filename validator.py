@@ -488,6 +488,10 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 stderr=True,
                 stdout=True,
                 detach=True,
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                read_only=True,
+                tmpfs={"/tmp": "size=128m,mode=1777"},
             )
             result = container.wait()
             exit_code = result.get("StatusCode", 0) if isinstance(result, dict) else 0

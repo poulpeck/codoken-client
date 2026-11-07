@@ -395,7 +395,8 @@ async def wizard(defaults: bool) -> None:
                 try:
                     subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=5)
                     engine = cmd
-                    click.echo(f"  Found: {cmd}  ✓")
+                    rootless_note = _rootless_note(cmd)
+                    click.echo(f"  Found: {cmd}  ✓{rootless_note}")
                     break
                 except Exception:
                     click.echo(f"  {cmd} is installed but the daemon is not running.")
@@ -690,6 +691,35 @@ def codoken_auth_load_web_config():
     return codoken_auth._load_web_config()
 
 
+def _rootless_note(cmd: str) -> str:
+    """Return a short inline note about rootless mode; empty string if nothing to report."""
+    if sys.platform != "linux":
+        return ""
+    if cmd == "podman":
+        # Podman on Linux is rootless by default when run as a non-root user.
+        if os.getuid() != 0:
+            return "  (rootless — recommended)"
+        return "  [WARN: running as root — prefer rootless]"
+    if cmd == "docker":
+        # Check if dockerd is in rootless mode (context name contains 'rootless',
+        # or DOCKER_HOST points to a rootless socket).
+        try:
+            r = subprocess.run(
+                ["docker", "info", "--format", "{{.SecurityOptions}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "rootless" in r.stdout.lower():
+                return "  (rootless)"
+        except Exception:
+            pass
+        return (
+            "\n  [WARN] Docker is running as root. For better isolation, switch to "
+            "rootless Docker or use Podman instead.\n"
+            "  See: https://docs.docker.com/engine/security/rootless/"
+        )
+    return ""
+
+
 def _engine_install_hint() -> str:
     if sys.platform == "darwin":
         return (
@@ -708,11 +738,12 @@ def _engine_install_hint() -> str:
         )
     else:
         return (
-            "  Linux — install Podman (rootless, no daemon needed):\n"
+            "  Linux — recommended: Podman rootless (no root daemon, better isolation):\n"
             "    Ubuntu/Debian: sudo apt install podman\n"
             "    Fedora/RHEL:   sudo dnf install podman\n"
-            "  Or Docker:       sudo apt install docker.io && sudo usermod -aG docker $USER\n"
-            "  (log out and back in after adding yourself to the docker group)"
+            "  Alternative: Docker rootless mode (preferred over standard Docker):\n"
+            "    https://docs.docker.com/engine/security/rootless/\n"
+            "  Avoid standard Docker (daemon runs as root) unless rootless is configured."
         )
 
 
@@ -1055,7 +1086,16 @@ def _probe_engine(rep: Report) -> None:
         # Try subprocess first (works for both podman and docker regardless of socket path)
         try:
             subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=5)
-            rep.ok("container engine", f"{cmd} daemon responds")
+            note = _rootless_note(cmd).strip()
+            detail = f"{cmd} daemon responds"
+            if note:
+                detail += f"  {note}"
+                if "[WARN" in note:
+                    rep.warn("container engine", detail)
+                else:
+                    rep.ok("container engine", detail)
+            else:
+                rep.ok("container engine", detail)
             return
         except Exception:
             pass
