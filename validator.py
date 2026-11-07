@@ -125,17 +125,17 @@ def _backoff(failures: int) -> float:
 # carry two `package` clauses, so solution and harness are sibling files.
 RUNTIME_CONFIG = {
     "python": {
-        "image": "python:3.11-slim",
+        "image": "python:3.11-slim@sha256:cce12316475d7d56d605f76e1d811d0dc4e7227f2d4afd29951521264f504ff8",
         "files": ("solution.py",),
         "command": "python solution.py"
     },
     "cpp": {
-        "image": "gcc:latest",
+        "image": "gcc:latest@sha256:f07e6385ea2bba4ee5582cadc50e5d3ce60cf758f0a3c9168ba0615475f1e459",
         "files": ("solution.cpp",),
         "command": "g++ solution.cpp -o /tmp/solution && /tmp/solution"
     },
     "javascript": {
-        "image": "node:18-slim",
+        "image": "node:18-slim@sha256:f9ab18e354e6855ae56ef2b290dd225c1e51a564f87584b9bd21dd651838830e",
         "files": ("solution.js",),
         "command": "node solution.js"
     },
@@ -149,51 +149,50 @@ RUNTIME_CONFIG = {
         },
     },
     "rust": {
-        "image": "rust:latest",
+        "image": "rust:latest@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc",
         "files": ("solution.rs",),
         "command": "rustc solution.rs -o /tmp/solution && /tmp/solution",
         "mem_limit": "512m",
         "timeout": 180,
     },
     "golang": {
-        "image": "golang:alpine",
+        "image": "golang:alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4",
         "files": ("solution.go",),
         "command": "go run solution.go",
         "mem_limit": "512m",
         "timeout": 120,
     },
     "php": {
-        "image": "php:8.2-cli",
+        "image": "php:8.2-cli@sha256:2d72ff4b0cfe82e22f01f15223bc4ab4c825d318cb2e3275554cd32299a5ea50",
         "files": ("solution.php",),
         "command": "php solution.php"
     },
     "ruby": {
-        "image": "ruby:3.2-slim",
+        "image": "ruby:3.2-slim@sha256:84184c9e2c368885a1d0c93ad1953c33d81081058d274b87b4aa6f3e209e5d16",
         "files": ("solution.rb",),
         "command": "ruby solution.rb"
     },
     "java": {
-        "image": "eclipse-temurin:21-jdk-alpine",
+        "image": "eclipse-temurin:21-jdk-alpine@sha256:fd52084c35bbac78890d95d57707d31ffc9d7a3324199e89c06be2a9dc71bfa0",
         "files": ("Solution.java", "Test.java"),
-        # Compile both files together, run Test which calls Solution methods.
         "command": "javac -d /tmp Solution.java Test.java && java -ea -cp /tmp Test"
     },
     "gdscript": {
-        "image": "barichello/godot-ci:4.3",
+        "image": "barichello/godot-ci:4.3@sha256:8d3a9fc683fcaa5b7d8b1c90fa94318402ebb00edeb5f6e2df4bac46665b98ff",
         "files": ("solution.gd",),
         "command": "godot --headless --script solution.gd",
         "mem_limit": "512m",
         "timeout": 90,
     },
     "gdscript3": {
-        "image": "barichello/godot-ci:3.6.2",
+        "image": "barichello/godot-ci:3.6.2@sha256:026e1f652dd1d718073bb5c32372b3a5d73e7ad7bfe13b9052423604fca6918f",
         "files": ("solution.gd",),
         "command": "godot --video-driver Dummy --script solution.gd",
         "mem_limit": "512m",
         "timeout": 90,
     },
     "sqlite": {
-        "image": "python:3.12-slim",
+        "image": "python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54",
         "files": ("solution.py",),
         "command": "python solution.py",
     },
@@ -204,7 +203,7 @@ RUNTIME_CONFIG = {
         "mem_limit": "512m",
         "timeout": 60,
         "build": {
-            "base": "postgres:16-alpine",
+            "base": "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139",
             "run": "apk add --no-cache python3",
         },
     },

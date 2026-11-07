@@ -1079,6 +1079,33 @@ async def _probe_llm(rep: Report) -> None:
                  "none of ollama :11434 / LM Studio :1234 / llama.cpp :8080 reachable")
 
 
+def _probe_userns(rep: Report, cmd: str) -> None:
+    """Check whether user namespace remapping is active; warn if not (Linux only)."""
+    if sys.platform != "linux":
+        return
+    if cmd == "podman" and os.getuid() != 0:
+        # Rootless Podman always uses user namespaces — nothing to check.
+        rep.ok("user namespaces", "rootless Podman — container root maps to unprivileged host UID")
+        return
+    if cmd == "docker":
+        try:
+            r = subprocess.run(
+                ["docker", "info", "--format", "{{.SecurityOptions}}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "name=userns" in r.stdout.lower():
+                rep.ok("user namespaces", "Docker userns-remap active")
+                return
+        except Exception:
+            pass
+        rep.warn(
+            "user namespaces",
+            "Docker userns-remap not configured — container root = host root on escape.\n"
+            "  Fix: add {\"userns-remap\": \"default\"} to /etc/docker/daemon.json and restart dockerd.\n"
+            "  Or switch to Podman rootless (preferred).",
+        )
+
+
 def _probe_engine(rep: Report) -> None:
     for cmd in ("podman", "docker"):
         if not shutil.which(cmd):
@@ -1096,6 +1123,7 @@ def _probe_engine(rep: Report) -> None:
                     rep.ok("container engine", detail)
             else:
                 rep.ok("container engine", detail)
+            _probe_userns(rep, cmd)
             return
         except Exception:
             pass
@@ -1105,6 +1133,7 @@ def _probe_engine(rep: Report) -> None:
             client = docker.from_env()
             client.ping()
             rep.ok("container engine", f"{cmd} daemon responds")
+            _probe_userns(rep, cmd)
             return
         except Exception as exc:  # noqa: BLE001
             rep.warn("container engine",
