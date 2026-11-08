@@ -195,8 +195,11 @@ class CodokenAuth:
     async def _sign_in_anonymous(self, api_key: str) -> None:
         """Anonymous sign-in via Firebase Auth REST API."""
         url = FIREBASE_SIGNIN_URL.format(api_key=api_key)
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(url, json={"returnSecureToken": True})
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(url, json={"returnSecureToken": True})
+        except httpx.TransportError as exc:
+            raise CodokenNetworkError(f"Network unavailable during sign-in: {exc}") from exc
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase anonymous sign-in failed ({r.status_code}): {r.text[:200]}"
@@ -209,12 +212,15 @@ class CodokenAuth:
     async def _sign_in_email(self, api_key: str, email: str, password: str) -> None:
         """Email/password sign-in via Firebase Auth REST API."""
         url = FIREBASE_SIGNIN_EMAIL_URL.format(api_key=api_key)
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(url, json={
-                "email": email,
-                "password": password,
-                "returnSecureToken": True,
-            })
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(url, json={
+                    "email": email,
+                    "password": password,
+                    "returnSecureToken": True,
+                })
+        except httpx.TransportError as exc:
+            raise CodokenNetworkError(f"Network unavailable during sign-in: {exc}") from exc
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase email sign-in failed ({r.status_code}): {r.text[:200]}"
@@ -291,7 +297,8 @@ class CodokenAuth:
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
                 })
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError,
+                httpx.TransportError) as exc:
             raise CodokenNetworkError(f"Network unavailable during token refresh: {exc}") from exc
         if r.status_code != 200:
             raise CodokenAuthError(
