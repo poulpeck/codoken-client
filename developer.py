@@ -690,29 +690,29 @@ def node_status_cmd() -> None:
               help="Broker base URL (default $CODOKEN_BROKER_WS or wss://broker.codoken.dev).")
 @click.option("--auth-store", "auth_store_path", default=None,
               help="Path to auth.json (default ~/.codoken/auth.json).")
-def proxy_cmd(port: int, broker: Optional[str], auth_store_path: Optional[str]) -> None:
+@click.option("--watch/--no-watch", default=True, show_default=True,
+              help="Poll worker availability every 30s and log changes.")
+def proxy_cmd(port: int, broker: Optional[str], auth_store_path: Optional[str],
+              watch: bool) -> None:
     """Start a local OpenAI-compatible proxy on localhost:PORT.
 
-    Any tool that supports OpenAI-compatible endpoints can point at
-    http://localhost:PORT/v1 — the proxy handles Firebase token refresh
-    automatically, so you never need to rotate an API key manually.
+    Trusted workers appear as models in your tool's dropdown — no UUIDs,
+    no manual config. The proxy handles Firebase token refresh automatically.
 
     \b
     Quick start:
         codoken proxy --port 8080
 
     \b
-    Then configure your tool:
+    Configure your tool:
         base_url  =  http://localhost:8080/v1
         api_key   =  codoken           (any non-empty string)
-
-    The proxy forwards all requests to the broker as your authenticated
-    identity, routing tasks to your trusted workers.
     """
-    asyncio.run(_run_proxy(port, broker, auth_store_path))
+    asyncio.run(_run_proxy(port, broker, auth_store_path, watch))
 
 
-async def _run_proxy(port: int, broker: Optional[str], auth_store_path: Optional[str]) -> None:
+async def _run_proxy(port: int, broker: Optional[str], auth_store_path: Optional[str],
+                     watch: bool) -> None:
     import httpx
     try:
         import uvicorn
@@ -740,51 +740,234 @@ async def _run_proxy(port: int, broker: Optional[str], auth_store_path: Optional
     target_base = _http_base(broker_base)
     auth = CodokenAuth("developer", broker_base=broker, auth_store=auth_store)
 
-    # Warm up: ensure credentials are valid before accepting requests
     try:
         await auth.get_id_token()
     except Exception as exc:
         raise click.ClickException(f"authentication failed: {exc}") from exc
 
-    _log(f"Codoken proxy listening on  http://localhost:{port}/v1")
-    _log(f"Forwarding to              {target_base}/v1")
-    _log(f"Configure your tool:")
-    _log(f"  base_url = http://localhost:{port}/v1")
-    _log(f"  api_key  = codoken   (any non-empty string)")
-    _log("Press Ctrl+C to stop.\n")
+    # ---------------------------------------------------------------------------
+    # Worker registry — refreshed on every /v1/models call and every completion
+    # ---------------------------------------------------------------------------
+    # Each entry: {"client_id", "model_label", "endpoint_label", "busy",
+    #              "relationship_id"}
+    _workers: list[Dict[str, Any]] = []
+    _workers_seen: set[str] = set()   # client_ids seen so far (for watch logging)
 
+    async def _fetch_workers(client: httpx.AsyncClient) -> list[Dict[str, Any]]:
+        try:
+            token = await auth.get_id_token()
+            r = await client.get(
+                f"{target_base}/trusted/workers",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=8,
+            )
+            if r.status_code == 200:
+                return r.json().get("workers", [])
+        except Exception:
+            pass
+        return []
+
+    async def _refresh_workers(client: httpx.AsyncClient) -> None:
+        nonlocal _workers
+        _workers = await _fetch_workers(client)
+
+    def _resolve_worker(model_hint: str) -> Optional[Dict[str, Any]]:
+        """Find an available worker matching the model hint."""
+        available = [w for w in _workers if not w.get("busy")]
+        if not available:
+            return None
+        if not model_hint or model_hint in ("default", "codoken"):
+            return available[0]
+        # Exact relationship_id match
+        for w in available:
+            if w.get("relationship_id") == model_hint:
+                return w
+        # Case-insensitive label match
+        hint_lower = model_hint.lower()
+        for w in available:
+            if hint_lower in (w.get("model_label") or "").lower():
+                return w
+        # Partial client_id match
+        for w in available:
+            if hint_lower in w.get("client_id", "").lower():
+                return w
+        return None
+
+    def _worker_model_id(w: Dict[str, Any]) -> str:
+        """Stable model ID for a worker — prefer label, fall back to client_id."""
+        return (w.get("model_label") or w.get("client_id") or "unknown").replace(" ", "-")
+
+    # ---------------------------------------------------------------------------
+    # Watch task — logs worker availability changes every 30s
+    # ---------------------------------------------------------------------------
+    async def _watch_loop(client: httpx.AsyncClient) -> None:
+        nonlocal _workers, _workers_seen
+        while True:
+            await asyncio.sleep(30)
+            fresh = await _fetch_workers(client)
+            fresh_ids = {w["client_id"] for w in fresh}
+            gone    = _workers_seen - fresh_ids
+            arrived = fresh_ids - _workers_seen
+            for w in fresh:
+                if w["client_id"] in arrived:
+                    label = w.get("model_label") or w["client_id"]
+                    _log(f"  [{_ts()}] + worker online:  {label}")
+            for cid in gone:
+                _log(f"  [{_ts()}] - worker offline: {cid}")
+            _workers = fresh
+            _workers_seen = fresh_ids
+
+    # ---------------------------------------------------------------------------
+    # FastAPI app
+    # ---------------------------------------------------------------------------
     proxy_app = FastAPI(docs_url=None, redoc_url=None)
 
-    @proxy_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
-    async def forward(path: str, request: FRequest) -> FResponse:
-        url = f"{target_base}/v1/{path}"
-        if request.query_string:
-            url += "?" + request.query_string.decode()
+    # Shared httpx client (connection-pooled, lives for the proxy lifetime)
+    _http_client: Optional[httpx.AsyncClient] = None
+
+    @proxy_app.on_event("startup")
+    async def _startup():
+        nonlocal _http_client, _workers, _workers_seen
+        _http_client = httpx.AsyncClient(timeout=700)
+        await _refresh_workers(_http_client)
+        _workers_seen = {w["client_id"] for w in _workers}
+        if watch:
+            asyncio.create_task(_watch_loop(_http_client))
+
+    @proxy_app.on_event("shutdown")
+    async def _shutdown():
+        if _http_client:
+            await _http_client.aclose()
+        auth.stop()
+
+    # --- GET /v1/models — return online trusted workers as model list ---
+    @proxy_app.get("/v1/models")
+    async def list_models():
+        await _refresh_workers(_http_client)
+        _workers_seen.update(w["client_id"] for w in _workers)
+        entries = []
+        for w in _workers:
+            mid = _worker_model_id(w)
+            owner = w.get("endpoint_label") or w.get("client_id", "")
+            entries.append({
+                "id":       mid,
+                "object":   "model",
+                "created":  int(time.time()),
+                "owned_by": owner,
+                "codoken": {
+                    "relationship_id": w.get("relationship_id", ""),
+                    "busy":            w.get("busy", False),
+                },
+            })
+        # Always include a "default" entry pointing at the first available worker
+        if entries:
+            entries.insert(0, {
+                "id":       "default",
+                "object":   "model",
+                "created":  int(time.time()),
+                "owned_by": "codoken",
+                "codoken":  {"note": "routes to first available trusted worker"},
+            })
+        return {"object": "list", "data": entries}
+
+    # --- POST /v1/chat/completions — resolve worker locally, then forward ---
+    @proxy_app.post("/v1/chat/completions")
+    async def chat_completions(request: FRequest) -> FResponse:
+        try:
+            body_bytes = await request.body()
+            body = json.loads(body_bytes)
+        except Exception:
+            return FResponse(
+                content=json.dumps({"error": {"message": "invalid JSON body", "type": "invalid_request_error"}}),
+                status_code=400, media_type="application/json",
+            )
+
+        model_hint = (body.get("model") or "").strip()
+
+        # Refresh worker list before routing
+        await _refresh_workers(_http_client)
+        _workers_seen.update(w["client_id"] for w in _workers)
+
+        worker = _resolve_worker(model_hint)
+
+        if worker is None:
+            all_workers = _workers
+            if not all_workers:
+                msg = "No trusted workers online. Ask your trusted peer to start their node."
+            else:
+                busy_labels = [w.get("model_label") or w["client_id"] for w in all_workers if w.get("busy")]
+                msg = f"All trusted workers are busy ({', '.join(busy_labels)}). Try again shortly."
+            return FResponse(
+                content=json.dumps({"error": {"message": msg, "type": "service_unavailable"}}),
+                status_code=503, media_type="application/json",
+            )
+
+        # Rewrite model field to the relationship_id so the broker routes correctly
+        relationship_id = worker.get("relationship_id") or ""
+        body["model"] = relationship_id or _worker_model_id(worker)
+        worker_label = worker.get("model_label") or worker.get("client_id", "")
+
+        _log(f"  [{_ts()}] → {worker_label}  (model={model_hint or 'default'})")
 
         try:
             id_token = await auth.get_id_token()
         except Exception as exc:
             return FResponse(
                 content=json.dumps({"error": {"message": f"token refresh failed: {exc}", "type": "authentication_error"}}),
-                status_code=401,
-                media_type="application/json",
+                status_code=401, media_type="application/json",
             )
 
-        body = await request.body()
-        headers = {
-            "Authorization": f"Bearer {id_token}",
-            "Content-Type": request.headers.get("content-type", "application/json"),
-            "Accept":        request.headers.get("accept", "application/json"),
-        }
-
         try:
-            async with httpx.AsyncClient(timeout=700) as client:
-                resp = await client.request(
-                    method=request.method,
-                    url=url,
-                    content=body,
-                    headers=headers,
-                )
+            resp = await _http_client.post(
+                f"{target_base}/v1/chat/completions",
+                content=json.dumps(body).encode(),
+                headers={
+                    "Authorization": f"Bearer {id_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            return FResponse(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type="application/json",
+            )
+        except httpx.TimeoutException:
+            return FResponse(
+                content=json.dumps({"error": {"message": "trusted worker timed out", "type": "timeout"}}),
+                status_code=504, media_type="application/json",
+            )
+        except Exception as exc:
+            return FResponse(
+                content=json.dumps({"error": {"message": str(exc), "type": "proxy_error"}}),
+                status_code=502, media_type="application/json",
+            )
+
+    # --- all other paths — forward verbatim ---
+    @proxy_app.api_route("/{path:path}",
+                         methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def forward(path: str, request: FRequest) -> FResponse:
+        url = f"{target_base}/v1/{path}"
+        if request.query_string:
+            url += "?" + request.query_string.decode()
+        try:
+            id_token = await auth.get_id_token()
+        except Exception as exc:
+            return FResponse(
+                content=json.dumps({"error": {"message": f"token refresh failed: {exc}", "type": "authentication_error"}}),
+                status_code=401, media_type="application/json",
+            )
+        body = await request.body()
+        try:
+            resp = await _http_client.request(
+                method=request.method,
+                url=url,
+                content=body,
+                headers={
+                    "Authorization": f"Bearer {id_token}",
+                    "Content-Type":  request.headers.get("content-type", "application/json"),
+                    "Accept":        request.headers.get("accept", "application/json"),
+                },
+            )
             return FResponse(
                 content=resp.content,
                 status_code=resp.status_code,
@@ -793,22 +976,27 @@ async def _run_proxy(port: int, broker: Optional[str], auth_store_path: Optional
         except httpx.TimeoutException:
             return FResponse(
                 content=json.dumps({"error": {"message": "broker timed out", "type": "timeout"}}),
-                status_code=504,
-                media_type="application/json",
+                status_code=504, media_type="application/json",
             )
         except Exception as exc:
             return FResponse(
                 content=json.dumps({"error": {"message": str(exc), "type": "proxy_error"}}),
-                status_code=502,
-                media_type="application/json",
+                status_code=502, media_type="application/json",
             )
+
+    _log(f"Codoken proxy  →  http://localhost:{port}/v1")
+    _log(f"Broker         →  {target_base}")
+    _log(f"Configure your tool:")
+    _log(f"  base_url = http://localhost:{port}/v1")
+    _log(f"  api_key  = codoken   (any non-empty string)")
+    if watch:
+        _log("Watching worker availability (Ctrl+C to stop).\n")
+    else:
+        _log("Press Ctrl+C to stop.\n")
 
     config = uvicorn.Config(proxy_app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
-    try:
-        await server.serve()
-    finally:
-        auth.stop()
+    await server.serve()
 
 
 if __name__ == "__main__":
