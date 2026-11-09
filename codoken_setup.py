@@ -394,21 +394,51 @@ async def wizard(defaults: bool) -> None:
         click.echo("Developers who trust you will route tasks directly to this machine.")
         import httpx as _httpx_tw
 
-        default_url = "http://localhost:11434/v1"
+        # Probe known backends — same as worker detection
+        TW_ENDPOINTS = {
+            "Ollama":    ("http://localhost:11434", "/api/tags"),
+            "LM Studio": ("http://localhost:1234",  "/v1/models"),
+            "llama.cpp": ("http://localhost:8080",  "/health"),
+        }
+        found_tw = []
+        async with _httpx_tw.AsyncClient(timeout=2) as http:
+            for name, (base, probe) in TW_ENDPOINTS.items():
+                try:
+                    r = await http.get(base + probe)
+                    if r.status_code == 200:
+                        found_tw.append((name, base))
+                except Exception:
+                    pass
+
+        if found_tw:
+            tw_name, tw_base = found_tw[0]
+            click.echo(f"  Found: {', '.join(n for n, _ in found_tw)}  ✓")
+            default_url = tw_base + "/v1"
+        else:
+            tw_name, tw_base = "Ollama", "http://localhost:11434"
+            default_url = "http://localhost:11434/v1"
+
         tw_llm_url = click.prompt(
             "  LLM endpoint URL",
             default=default_url,
         ).strip()
 
-        # Try to auto-detect the first available model
+        # Try to auto-detect the first available model from the chosen endpoint
         detected_tw_model = ""
         try:
             async with _httpx_tw.AsyncClient(timeout=3) as http:
-                r = await http.get(f"{tw_llm_url}/models")
-                if r.status_code == 200:
-                    data = r.json().get("data", [])
-                    if data:
-                        detected_tw_model = data[0].get("id", "")
+                if tw_name == "Ollama" and tw_llm_url.startswith(tw_base):
+                    r = await http.get(f"{tw_base}/api/tags")
+                    if r.status_code == 200:
+                        models = r.json().get("models", [])
+                        if models:
+                            detected_tw_model = models[0].get("name") or models[0].get("model", "")
+                else:
+                    r = await http.get(f"{tw_llm_url}/models")
+                    if r.status_code == 200:
+                        data = r.json().get("data", [])
+                        if data:
+                            detected_tw_model = data[0].get("id", "")
         except Exception:
             pass
 
