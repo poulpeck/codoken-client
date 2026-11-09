@@ -10,7 +10,7 @@ Usage:
     python codoken_setup.py service uninstall remove the service
 
 The wizard:
-  1. Asks which role(s) to run: worker, validator, or both
+  1. Asks which role(s) to run: worker, validator, trusted_worker, or any combination
   2. Signs up or signs in with email + password (Firebase)
   3. Detects the LLM backend (worker path)
   4. Detects Docker/Podman and pulls runtime images (validator path)
@@ -218,13 +218,12 @@ async def wizard(defaults: bool) -> None:
         click.echo("                   and independently verifies generated code.")
         click.echo("  trusted_worker — your machine runs a powerful LLM for developers you trust.")
         click.echo("                   Tasks route directly to you — no third-party validation.")
-        click.echo("  both           — run worker + validator on this machine (recommended if you")
-        click.echo("                   have both an LLM and a container engine installed).\n")
+        click.echo("")
+        click.echo("  You can combine roles with commas, e.g. worker,validator")
+        click.echo("  Typical choices: worker · validator · trusted_worker · worker,validator\n")
         role_input = click.prompt(
-            "Role", default="both",
+            "Role", default="worker,validator",
         ).strip().lower()
-        if role_input == "both":
-            role_input = "worker,validator"
 
     roles = {r.strip() for r in role_input.split(",") if r.strip()}
 
