@@ -403,6 +403,7 @@ LLM_PROBE_INTERVAL_S = 10  # how often to probe for LLM while paused
 async def run_worker():
     _reauthed = False
     consecutive_failures = 0
+    auth = CodokenAuth(ROLE)
     while True:
         # Pause file check — user ran `codoken pause`
         if os.path.exists(PAUSE_FILE):
@@ -427,7 +428,6 @@ async def run_worker():
         if start_paused:
             logging.warning("No local LLM backend detected — connecting to broker in paused mode.")
 
-        auth = CodokenAuth(ROLE)
         try:
             uri, extra_headers = await auth.connect_config()
             logging.info(f"Connecting Worker to Codoken broker ({uri})...")

@@ -540,6 +540,7 @@ async def validator_client():
     ensure_images_cached(client)
 
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
+    auth = CodokenAuth(ROLE, auth_store=auth_store)
     _reauthed = False
     consecutive_failures = 0
     while True:
@@ -561,7 +562,6 @@ async def validator_client():
                 await asyncio.sleep(60)
                 continue
 
-        auth = CodokenAuth(ROLE, auth_store=auth_store)
         try:
             uri, extra_headers = await auth.connect_config()
             print(f"[Validator] Connecting to Broker at {uri}...")

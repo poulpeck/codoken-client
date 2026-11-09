@@ -200,6 +200,8 @@ class CodokenAuth:
                 r = await client.post(url, json={"returnSecureToken": True})
         except httpx.TransportError as exc:
             raise CodokenNetworkError(f"Network unavailable during sign-in: {exc}") from exc
+        if r.status_code >= 500:
+            raise CodokenNetworkError(f"Firebase service unavailable ({r.status_code}) during sign-in")
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase anonymous sign-in failed ({r.status_code}): {r.text[:200]}"
@@ -221,6 +223,8 @@ class CodokenAuth:
                 })
         except httpx.TransportError as exc:
             raise CodokenNetworkError(f"Network unavailable during sign-in: {exc}") from exc
+        if r.status_code >= 500:
+            raise CodokenNetworkError(f"Firebase service unavailable ({r.status_code}) during sign-in")
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase email sign-in failed ({r.status_code}): {r.text[:200]}"
@@ -300,6 +304,8 @@ class CodokenAuth:
         except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError,
                 httpx.TransportError) as exc:
             raise CodokenNetworkError(f"Network unavailable during token refresh: {exc}") from exc
+        if r.status_code >= 500:
+            raise CodokenNetworkError(f"Firebase service unavailable ({r.status_code}) during token refresh")
         if r.status_code != 200:
             raise CodokenAuthError(
                 f"Firebase token refresh failed ({r.status_code}): {r.text[:200]}"
