@@ -108,7 +108,7 @@ def auto_configure_docker_host():
 # Broker URI + credentials come from codoken_auth (CODOKEN_AUTH /
 # CODOKEN_BROKER_WS env vars; devnet default is ?token=<role secret>).
 ROLE = "validator"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 RECONNECT_DELAY = 5
 RECONNECT_MAX   = 300
