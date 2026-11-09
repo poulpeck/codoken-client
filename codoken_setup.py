@@ -209,7 +209,7 @@ async def wizard(defaults: bool) -> None:
 
     # -- Role --
     if defaults:
-        role_input = codoken_config.effective("role") or "worker,validator"
+        role_input = codoken_config.effective("role") or "worker,validator,trusted_worker"
     else:
         click.echo("Roles:")
         click.echo("  worker         — your machine runs a local LLM (Ollama, LM Studio, llama.cpp)")
@@ -222,7 +222,7 @@ async def wizard(defaults: bool) -> None:
         click.echo("  You can combine roles with commas, e.g. worker,validator")
         click.echo("  Typical choices: worker · validator · trusted_worker · worker,validator\n")
         role_input = click.prompt(
-            "Role", default="worker,validator",
+            "Role", default="worker,validator,trusted_worker",
         ).strip().lower()
 
     roles = {r.strip() for r in role_input.split(",") if r.strip()}
