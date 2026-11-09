@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 ROLE = "trusted_worker"
-VERSION = "1.4.0"
+VERSION = "2.0.0"
 
 RECONNECT_DELAY = 5
 RECONNECT_MAX   = 300
