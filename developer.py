@@ -42,7 +42,7 @@ import websockets
 import yaml
 from websockets.exceptions import ConnectionClosed
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 import codoken_config
 
@@ -681,6 +681,134 @@ def node_status_cmd() -> None:
             click.echo(f"Paused until {resume_at[:16]}.")
     else:
         click.echo("Paused indefinitely. Run `codoken resume` to restart.")
+
+
+@cli.command(name="proxy")
+@click.option("--port", default=8080, show_default=True,
+              help="Local port to listen on.")
+@click.option("--broker", envvar="CODOKEN_BROKER_WS", default=None,
+              help="Broker base URL (default $CODOKEN_BROKER_WS or wss://broker.codoken.dev).")
+@click.option("--auth-store", "auth_store_path", default=None,
+              help="Path to auth.json (default ~/.codoken/auth.json).")
+def proxy_cmd(port: int, broker: Optional[str], auth_store_path: Optional[str]) -> None:
+    """Start a local OpenAI-compatible proxy on localhost:PORT.
+
+    Any tool that supports OpenAI-compatible endpoints can point at
+    http://localhost:PORT/v1 — the proxy handles Firebase token refresh
+    automatically, so you never need to rotate an API key manually.
+
+    \b
+    Quick start:
+        codoken proxy --port 8080
+
+    \b
+    Then configure your tool:
+        base_url  =  http://localhost:8080/v1
+        api_key   =  codoken           (any non-empty string)
+
+    The proxy forwards all requests to the broker as your authenticated
+    identity, routing tasks to your trusted workers.
+    """
+    asyncio.run(_run_proxy(port, broker, auth_store_path))
+
+
+async def _run_proxy(port: int, broker: Optional[str], auth_store_path: Optional[str]) -> None:
+    import httpx
+    try:
+        import uvicorn
+        from fastapi import FastAPI, Request as FRequest
+        from fastapi.responses import Response as FResponse
+    except ImportError:
+        raise click.ClickException(
+            "fastapi and uvicorn are required for the proxy command.\n"
+            "Install them with:  pip install fastapi uvicorn"
+        )
+
+    auth_store = auth_store_path or os.environ.get(
+        "CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json")
+    )
+    broker_base = broker or codoken_config.effective("broker") or "wss://broker.codoken.dev"
+
+    def _http_base(b: str) -> str:
+        b = b.rstrip("/")
+        if b.startswith("wss://"):
+            return "https://" + b[len("wss://"):]
+        if b.startswith("ws://"):
+            return "http://" + b[len("ws://"):]
+        return b
+
+    target_base = _http_base(broker_base)
+    auth = CodokenAuth("developer", broker_base=broker, auth_store=auth_store)
+
+    # Warm up: ensure credentials are valid before accepting requests
+    try:
+        await auth.get_id_token()
+    except Exception as exc:
+        raise click.ClickException(f"authentication failed: {exc}") from exc
+
+    _log(f"Codoken proxy listening on  http://localhost:{port}/v1")
+    _log(f"Forwarding to              {target_base}/v1")
+    _log(f"Configure your tool:")
+    _log(f"  base_url = http://localhost:{port}/v1")
+    _log(f"  api_key  = codoken   (any non-empty string)")
+    _log("Press Ctrl+C to stop.\n")
+
+    proxy_app = FastAPI(docs_url=None, redoc_url=None)
+
+    @proxy_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    async def forward(path: str, request: FRequest) -> FResponse:
+        url = f"{target_base}/v1/{path}"
+        if request.query_string:
+            url += "?" + request.query_string.decode()
+
+        try:
+            id_token = await auth.get_id_token()
+        except Exception as exc:
+            return FResponse(
+                content=json.dumps({"error": {"message": f"token refresh failed: {exc}", "type": "authentication_error"}}),
+                status_code=401,
+                media_type="application/json",
+            )
+
+        body = await request.body()
+        headers = {
+            "Authorization": f"Bearer {id_token}",
+            "Content-Type": request.headers.get("content-type", "application/json"),
+            "Accept":        request.headers.get("accept", "application/json"),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=700) as client:
+                resp = await client.request(
+                    method=request.method,
+                    url=url,
+                    content=body,
+                    headers=headers,
+                )
+            return FResponse(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type", "application/json").split(";")[0],
+            )
+        except httpx.TimeoutException:
+            return FResponse(
+                content=json.dumps({"error": {"message": "broker timed out", "type": "timeout"}}),
+                status_code=504,
+                media_type="application/json",
+            )
+        except Exception as exc:
+            return FResponse(
+                content=json.dumps({"error": {"message": str(exc), "type": "proxy_error"}}),
+                status_code=502,
+                media_type="application/json",
+            )
+
+    config = uvicorn.Config(proxy_app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    try:
+        await server.serve()
+    finally:
+        auth.stop()
 
 
 if __name__ == "__main__":

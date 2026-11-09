@@ -156,6 +156,11 @@ class CodokenAuth:
                  self.role, (self._uid or "?")[:12])
         return self.base_uri(), {"Authorization": f"Bearer {self._token}"}
 
+    async def get_id_token(self) -> str:
+        """Return a fresh Firebase ID token (refreshes automatically if needed)."""
+        await self._ensure_token()
+        return self._token or ""
+
     # ------------------------------------------------------------------
     # Firebase REST auth (no SDK required)
     # ------------------------------------------------------------------

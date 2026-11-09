@@ -212,12 +212,14 @@ async def wizard(defaults: bool) -> None:
         role_input = codoken_config.effective("role") or "worker,validator"
     else:
         click.echo("Roles:")
-        click.echo("  worker    — your machine runs a local LLM (Ollama, LM Studio, llama.cpp)")
-        click.echo("              and generates code for tasks submitted by developers.")
-        click.echo("  validator — your machine runs sandboxed containers (Docker/Podman)")
-        click.echo("              and independently verifies generated code.")
-        click.echo("  both      — run both roles on this machine (recommended if you have")
-        click.echo("              both an LLM and a container engine installed).\n")
+        click.echo("  worker         — your machine runs a local LLM (Ollama, LM Studio, llama.cpp)")
+        click.echo("                   and generates code for tasks submitted by developers.")
+        click.echo("  validator      — your machine runs sandboxed containers (Docker/Podman)")
+        click.echo("                   and independently verifies generated code.")
+        click.echo("  trusted_worker — your machine runs a powerful LLM for developers you trust.")
+        click.echo("                   Tasks route directly to you — no third-party validation.")
+        click.echo("  both           — run worker + validator on this machine (recommended if you")
+        click.echo("                   have both an LLM and a container engine installed).\n")
         role_input = click.prompt(
             "Role", default="both",
         ).strip().lower()
@@ -297,8 +299,8 @@ async def wizard(defaults: bool) -> None:
         "email":         token_data.get("email", ""),
         "saved_at":      __import__("time").time(),
     }
-    # Write the same entry for all roles so worker/validator/developer all find it
-    auth_record = {role: role_entry for role in ("worker", "validator", "developer")}
+    # Write the same entry for all roles so worker/validator/developer/trusted_worker all find it
+    auth_record = {role: role_entry for role in ("worker", "validator", "developer", "trusted_worker")}
     with open(auth_path, "w", encoding="utf-8") as fh:
         json.dump(auth_record, fh, indent=2)
         fh.write("\n")
@@ -382,6 +384,53 @@ async def wizard(defaults: bool) -> None:
                 "  After installing, load any GGUF model and start the server —\n"
                 "  the worker will detect it automatically."
             )
+
+    # -- Trusted worker: LLM endpoint config --
+    tw_llm_url = ""
+    tw_llm_model = ""
+    tw_llm_label = ""
+    if "trusted_worker" in roles:
+        click.echo("\n-- Trusted Worker: LLM endpoint --")
+        click.echo("The trusted worker calls any OpenAI-compatible endpoint (e.g. Ollama, LM Studio, llama.cpp).")
+        click.echo("Developers who trust you will route tasks directly to this machine.")
+        import httpx as _httpx_tw
+
+        default_url = "http://localhost:11434/v1"
+        tw_llm_url = click.prompt(
+            "  LLM endpoint URL",
+            default=default_url,
+        ).strip()
+
+        # Try to auto-detect the first available model
+        detected_tw_model = ""
+        try:
+            async with _httpx_tw.AsyncClient(timeout=3) as http:
+                r = await http.get(f"{tw_llm_url}/models")
+                if r.status_code == 200:
+                    data = r.json().get("data", [])
+                    if data:
+                        detected_tw_model = data[0].get("id", "")
+        except Exception:
+            pass
+
+        if detected_tw_model:
+            click.echo(f"  Detected model: {detected_tw_model}")
+            tw_llm_model = click.prompt(
+                "  Model to use (Enter to confirm, or type a different name)",
+                default=detected_tw_model,
+            ).strip()
+        else:
+            tw_llm_model = click.prompt(
+                "  Model name (e.g. qwen3:14b, deepseek-r1:8b)",
+                default="",
+            ).strip()
+
+        tw_llm_label = click.prompt(
+            "  Friendly label shown to developers (e.g. 'Jean's workstation — Qwen3 14B')",
+            default=f"{tw_llm_model or 'unknown model'} on {socket.gethostname()}",
+        ).strip()
+
+        click.echo(f"  Endpoint: {tw_llm_url}  model: {tw_llm_model or '(auto-detect)'}  label: {tw_llm_label}  ✓")
 
     # -- Validator: detect container engine + pick languages + pull images --
     selected_languages: list[str] = []
@@ -559,6 +608,12 @@ async def wizard(defaults: bool) -> None:
         "worker_parallel": "2",
         "worker_model": doc_model or "",
     }
+    if tw_llm_url or tw_llm_model:
+        doc["trusted_worker"] = {
+            "llm_url":   tw_llm_url   or "http://localhost:11434/v1",
+            "model":     tw_llm_model or "",
+            "label":     tw_llm_label or "",
+        }
     if selected_languages:
         all_keys = [lang for lang, _, _, _ in RUNTIME_INFO]
         if sorted(selected_languages) != sorted(all_keys):
@@ -653,6 +708,8 @@ async def wizard(defaults: bool) -> None:
             click.echo(f"    {set_env} python worker.py")
         if "validator" in roles:
             click.echo(f"    {set_env} python validator.py")
+        if "trusted_worker" in roles:
+            click.echo(f"    {set_env} python trusted_worker.py")
     click.echo("")
     click.echo("  Track your earnings:   https://codoken.io/dashboard.html")
     click.echo("  Useful commands:")
@@ -849,10 +906,10 @@ async def _launchd_install(roles: set[str], config: dict) -> None:
         "PYTHONUNBUFFERED": "1",
     }
     installed = []
-    for role in ("worker", "validator"):
+    for role in ("worker", "validator", "trusted_worker"):
         if role not in roles:
             continue
-        label = f"dev.codoken.{role}"
+        label = f"dev.codoken.{role.replace('_', '-')}"
         script = str(Path(_repo_dir()) / f"{role}.py")
         log_path = str(log_dir / f"{role}.log")
         plist_path = agents_dir / f"{label}.plist"
@@ -902,11 +959,11 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
         # systemd user services don't inherit it from the login session.
         "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
     }
-    for role in ("worker", "validator"):
+    for role in ("worker", "validator", "trusted_worker"):
         if role not in roles:
             continue
         script = str(Path(_repo_dir()) / f"{role}.py")
-        unit_path = systemd_dir / f"codoken-{role}.service"
+        unit_path = systemd_dir / f"codoken-{role.replace('_', '-')}.service"
         unit_path.write_text(_systemd_unit(role, script, env))
 
     # Single daemon-reload after writing all units.
@@ -915,10 +972,10 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
     except Exception as exc:
         click.echo(f"  [WARN] daemon-reload failed: {exc}")
 
-    for role in ("worker", "validator"):
+    for role in ("worker", "validator", "trusted_worker"):
         if role not in roles:
             continue
-        svc = f"codoken-{role}.service"
+        svc = f"codoken-{role.replace('_', '-')}.service"
         unit_path = systemd_dir / svc
         try:
             subprocess.run(["systemctl", "--user", "enable", "--now", svc], check=True)
@@ -942,16 +999,16 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
 async def _service_uninstall() -> None:
     if sys.platform == "darwin":
         agents_dir = Path.home() / "Library" / "LaunchAgents"
-        for role in ("worker", "validator"):
-            label = f"dev.codoken.{role}"
+        for role in ("worker", "validator", "trusted_worker"):
+            label = f"dev.codoken.{role.replace('_', '-')}"
             plist = agents_dir / f"{label}.plist"
             if plist.exists():
                 subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
                 plist.unlink()
                 click.echo(f"  Removed {label}")
     elif sys.platform.startswith("linux"):
-        for role in ("worker", "validator"):
-            svc = f"codoken-{role}.service"
+        for role in ("worker", "validator", "trusted_worker"):
+            svc = f"codoken-{role.replace('_', '-')}.service"
             subprocess.run(["systemctl", "--user", "disable", "--now", svc],
                            capture_output=True)
             unit = Path.home() / ".config" / "systemd" / "user" / svc
