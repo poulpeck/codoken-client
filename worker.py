@@ -469,6 +469,10 @@ async def run_worker():
             try:
                 await CodokenAuth.reauth()
                 _reauthed = True
+            except CodokenNetworkError as reauth_net_exc:
+                # Network down or cooldown active — retry silently without exiting
+                consecutive_failures += 1
+                logging.warning(f"Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
             except Exception as reauth_exc:
                 logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)

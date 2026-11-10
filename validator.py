@@ -639,6 +639,9 @@ async def validator_client():
                 try:
                     await CodokenAuth.reauth(auth_store=auth_store)
                     _reauthed = True
+                except CodokenNetworkError as reauth_net_exc:
+                    consecutive_failures += 1
+                    print(f"[Validator] Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
                 except Exception as reauth_exc:
                     print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
                     sys.exit(1)
@@ -655,6 +658,9 @@ async def validator_client():
             try:
                 await CodokenAuth.reauth(auth_store=auth_store)
                 _reauthed = True
+            except CodokenNetworkError as reauth_net_exc:
+                consecutive_failures += 1
+                print(f"[Validator] Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
             except Exception as reauth_exc:
                 print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
                 sys.exit(1)

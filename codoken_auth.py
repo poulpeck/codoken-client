@@ -371,6 +371,11 @@ class CodokenAuth:
         credentials. Works exactly like the setup wizard auth step but without
         the rest of the wizard. After returning, re-create the CodokenAuth
         instance and retry connect_config().
+
+        Skips the browser entirely and raises CodokenNetworkError when:
+        - the network appears to be down (broker unreachable), or
+        - a reauth was already attempted within the last 10 minutes
+          (prevents repeated browser tabs when running as a service).
         """
         import importlib
         import json as _json
@@ -382,6 +387,49 @@ class CodokenAuth:
 
         CLI_AUTH_URL = "https://codoken.io/cli-auth.html"
         _AUTH_TIMEOUT = 120
+        _REAUTH_COOLDOWN_S = 600  # 10 minutes between browser attempts
+
+        # --- Cooldown check: skip browser if we already tried recently ---
+        _codoken_dir = pathlib.Path.home() / ".codoken"
+        _cooldown_file = _codoken_dir / "reauth_at"
+        try:
+            if _cooldown_file.exists():
+                last = float(_cooldown_file.read_text().strip())
+                if time.time() - last < _REAUTH_COOLDOWN_S:
+                    remaining = int(_REAUTH_COOLDOWN_S - (time.time() - last))
+                    log.warning(
+                        "[CodokenAuth] reauth skipped — already attempted %ds ago "
+                        "(cooldown %ds remaining). Check your network connection.",
+                        int(time.time() - last), remaining,
+                    )
+                    raise CodokenNetworkError(
+                        f"reauth cooldown active ({remaining}s remaining) — "
+                        "network may be unavailable"
+                    )
+        except CodokenNetworkError:
+            raise
+        except Exception:
+            pass
+
+        # --- Network probe: skip browser if broker is unreachable ---
+        try:
+            async with httpx.AsyncClient(timeout=5) as _probe:
+                await _probe.get("https://broker.codoken.dev/health")
+        except Exception:
+            log.warning(
+                "[CodokenAuth] reauth skipped — broker unreachable, "
+                "network may be down. Will retry connection silently."
+            )
+            raise CodokenNetworkError(
+                "broker unreachable — skipping browser reauth until network is restored"
+            )
+
+        # --- Record this attempt before opening the browser ---
+        try:
+            _codoken_dir.mkdir(parents=True, exist_ok=True)
+            _cooldown_file.write_text(str(time.time()))
+        except Exception:
+            pass
 
         def _free_port() -> int:
             import socket
