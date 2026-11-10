@@ -52,9 +52,10 @@ log = logging.getLogger("codoken-auth")
 
 # Must stay in sync with AUTH_TOKENS in broker.py (devnet mode only).
 FALLBACK_TOKENS: Dict[str, str] = {
-    "developer": "developer-secret-token-789",
-    "worker":    "worker-secret-token-123",
-    "validator": "validator-secret-token-456",
+    "developer":     "developer-secret-token-789",
+    "worker":        "worker-secret-token-123",
+    "validator":     "validator-secret-token-456",
+    "trusted_worker": "trusted-worker-secret-token-000",
 }
 
 BROKER_BASE = os.environ.get("CODOKEN_BROKER_WS", "wss://broker.codoken.dev")

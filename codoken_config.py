@@ -43,7 +43,7 @@ from typing import Any, Dict, Optional
 CONFIG_DIR = ".codoken"
 CONFIG_FILE = "config.json"
 
-ROLES = ("broker", "worker", "validator", "developer")
+ROLES = ("broker", "worker", "validator", "developer", "trusted_worker")
 
 # Languages supported by the validator container network.
 # Must stay in sync with validator.py RUNTIME_CONFIG + LANGUAGE_ALIASES.
