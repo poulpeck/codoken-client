@@ -338,8 +338,19 @@ class CodokenAuth:
                     store = json.load(fh)
             except Exception:  # noqa: BLE001
                 store = {}
+            # Extract email from JWT payload if not already on the instance
+            email = self._email
+            if not email and self._token:
+                try:
+                    import base64 as _b64, json as _json
+                    payload = self._token.split(".")[1]
+                    payload += "=" * (-len(payload) % 4)
+                    email = _json.loads(_b64.urlsafe_b64decode(payload)).get("email", "")
+                except Exception:
+                    pass
             store[self.role] = {
                 "uid": self._uid,
+                "email": email or "",
                 "id_token": self._token,
                 "refresh_token": self._refresh_token,
                 "saved_at": time.time(),

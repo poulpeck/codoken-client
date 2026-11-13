@@ -264,6 +264,14 @@ async def wizard(defaults: bool) -> None:
             entry = stored.get("developer") or stored.get("worker") or stored.get("validator") or stored.get("trusted_worker")
             if entry and entry.get("refresh_token") and entry.get("uid"):
                 email = entry.get("email", "")
+                if not email and entry.get("id_token"):
+                    try:
+                        import base64 as _b64
+                        payload = entry["id_token"].split(".")[1]
+                        payload += "=" * (-len(payload) % 4)
+                        email = json.loads(_b64.urlsafe_b64decode(payload)).get("email", "")
+                    except Exception:
+                        pass
                 uid_short = entry["uid"][:12]
                 label = email if email else uid_short + "…"
                 click.echo(f"\n  Currently signed in as: {label}")
