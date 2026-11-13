@@ -258,25 +258,29 @@ async def wizard(defaults: bool) -> None:
     from codoken_auth import CodokenAuth, CodokenAuthError
 
     auth_path = USER_CONFIG.parent / "auth.json"
-    # Skip browser login if valid credentials are already persisted.
     if auth_path.exists():
         try:
             stored = json.loads(auth_path.read_text())
-            entry = stored.get("developer") or stored.get("worker") or stored.get("validator")
+            entry = stored.get("developer") or stored.get("worker") or stored.get("validator") or stored.get("trusted_worker")
             if entry and entry.get("refresh_token") and entry.get("uid"):
-                uid = entry["uid"][:12]
                 email = entry.get("email", "")
-                label = email if email else uid + "…"
-                click.echo(f"  Already signed in as {label}  (skip login)")
-                click.echo(f"  To switch accounts, delete ~/.codoken/auth.json and re-run setup.\n")
-                token_data = {
-                    "uid": entry["uid"],
-                    "idToken": entry.get("id_token", ""),
-                    "refreshToken": entry.get("refresh_token", ""),
-                    "email": entry.get("email", ""),
-                }
-                # Jump straight to post-auth steps
-                _after_auth = True
+                uid_short = entry["uid"][:12]
+                label = email if email else uid_short + "…"
+                click.echo(f"\n  Currently signed in as: {label}")
+                keep = click.confirm("  Keep this account?", default=True)
+                if keep:
+                    token_data = {
+                        "uid": entry["uid"],
+                        "idToken": entry.get("id_token", ""),
+                        "refreshToken": entry.get("refresh_token", ""),
+                        "email": entry.get("email", ""),
+                    }
+                    _after_auth = True
+                else:
+                    click.echo("  Switching accounts — opening browser to sign in...")
+                    _after_auth = False
+            else:
+                _after_auth = False
         except Exception:
             _after_auth = False
     else:
