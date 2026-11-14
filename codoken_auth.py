@@ -536,7 +536,7 @@ class CodokenAuth:
             "email":         result.get("email", ""),
             "saved_at":      time.time(),
         }
-        for role in ("worker", "validator", "developer"):
+        for role in ("worker", "validator", "developer", "trusted_worker"):
             existing[role] = role_entry
         store_path.write_text(_json.dumps(existing, indent=2))
         email_label = result.get("email") or (result.get("uid") or "")[:12] + "…"
