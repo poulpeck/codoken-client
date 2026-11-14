@@ -5,6 +5,7 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 import httpx
 import websockets
@@ -211,7 +212,8 @@ async def run_trusted_worker():
 
     _reauthed = False
     consecutive_failures = 0
-    auth = CodokenAuth(ROLE)
+    auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
+    auth = CodokenAuth(ROLE, auth_store=auth_store)
 
     while True:
         if os.path.exists(PAUSE_FILE):
@@ -240,7 +242,7 @@ async def run_trusted_worker():
                     sys.exit(1)
                 logging.warning("Authentication rejected. Launching re-authentication...")
                 try:
-                    await CodokenAuth.reauth()
+                    await CodokenAuth.reauth(auth_store=auth_store)
                     _reauthed = True
                 except CodokenNetworkError as reauth_net_exc:
                     consecutive_failures += 1
@@ -259,7 +261,7 @@ async def run_trusted_worker():
                 sys.exit(1)
             logging.warning(f"Authentication failed: {e}. Launching re-authentication...")
             try:
-                await CodokenAuth.reauth()
+                await CodokenAuth.reauth(auth_store=auth_store)
                 _reauthed = True
             except CodokenNetworkError as reauth_net_exc:
                 consecutive_failures += 1
