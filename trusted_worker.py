@@ -173,10 +173,10 @@ async def trusted_worker_session(websocket, auth: CodokenAuth) -> None:
                     )
                     logging.info(f"[trusted] task {task_id} done — {total_tokens} tokens")
                     await send(json.dumps({
-                        "action":       "trusted_task_completed",
-                        "task_id":      task_id,
-                        "result":       content,
-                        "total_tokens": total_tokens,
+                        "action":     "trusted_task_completed",
+                        "task_id":    task_id,
+                        "result":     content,
+                        "tokens_used": total_tokens,
                     }))
                 except Exception as exc:
                     logging.error(f"[trusted] task {task_id} failed: {exc}")
