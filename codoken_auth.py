@@ -575,3 +575,34 @@ class CodokenAuth:
         if self._refresh_task is not None:
             self._refresh_task.cancel()
             self._refresh_task = None
+
+
+async def check_for_update(current_version: str, repo: str = "poulpeck/codoken-client") -> None:
+    """Fetch the latest GitHub tag and warn if current_version is behind.
+
+    Runs at startup; never raises — a network failure is silently ignored.
+    Tag format expected: 'vX.Y.Z' or 'X.Y.Z'.
+    """
+    import logging as _log
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"https://api.github.com/repos/{repo}/tags",
+                headers={"Accept": "application/vnd.github+json"},
+            )
+        if r.status_code != 200:
+            return
+        tags = r.json()
+        if not tags:
+            return
+        latest_raw = tags[0].get("name", "")
+        latest = latest_raw.lstrip("v")
+        current = current_version.lstrip("v")
+        if latest and latest != current:
+            _log.warning(
+                "A new version of codoken-client is available: %s (you have %s). "
+                "Run: git pull && pip install -r requirements.txt",
+                latest_raw, current_version,
+            )
+    except Exception:
+        pass

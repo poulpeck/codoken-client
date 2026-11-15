@@ -15,7 +15,7 @@ import codoken_config
 
 codoken_config.apply_to_env("trusted_worker")
 
-from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError  # noqa: E402
+from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError, check_for_update  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -210,7 +210,7 @@ async def run_trusted_worker():
 
     logging.info(f"Trusted worker starting — endpoint: {LLM_URL}, model: {LLM_MODEL or '(auto-detect)'}, label: {LLM_LABEL or '(none)'}")
 
-    _reauthed = False
+    await check_for_update(VERSION)
     consecutive_failures = 0
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     auth = CodokenAuth(ROLE, auth_store=auth_store)
@@ -237,40 +237,20 @@ async def run_trusted_worker():
             logging.warning(f"Broker unreachable ({type(e).__name__}). Retrying in {delay:.0f}s...")
         except InvalidStatus as e:
             if e.response.status_code in (401, 403):
-                if _reauthed:
-                    logging.error("Authentication failed after reauth. Exiting.")
-                    sys.exit(1)
-                logging.warning("Authentication rejected. Launching re-authentication...")
-                try:
-                    await CodokenAuth.reauth(auth_store=auth_store)
-                    _reauthed = True
-                except CodokenNetworkError as reauth_net_exc:
-                    consecutive_failures += 1
-                    logging.warning(f"Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
-                except Exception as reauth_exc:
-                    logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
-                    sys.exit(1)
-                consecutive_failures = 0
-                continue
+                logging.error(
+                    "Authentication rejected by broker. Credentials may be missing or expired. "
+                    "Run: python codoken_setup.py"
+                )
+                sys.exit(1)
             else:
                 consecutive_failures += 1
                 logging.error(f"Broker returned HTTP {e.response.status_code}. Retrying in {_backoff(consecutive_failures):.0f}s...")
         except CodokenAuthError as e:
-            if _reauthed:
-                logging.error(f"Authentication failed after reauth: {e}. Exiting.")
-                sys.exit(1)
-            logging.warning(f"Authentication failed: {e}. Launching re-authentication...")
-            try:
-                await CodokenAuth.reauth(auth_store=auth_store)
-                _reauthed = True
-            except CodokenNetworkError as reauth_net_exc:
-                consecutive_failures += 1
-                logging.warning(f"Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
-            except Exception as reauth_exc:
-                logging.error(f"Re-authentication failed: {reauth_exc}. Exiting.")
-                sys.exit(1)
-            consecutive_failures = 0
-            continue
+            logging.error(
+                f"Authentication failed: {e}. "
+                "Run: python codoken_setup.py"
+            )
+            sys.exit(1)
         except Exception as e:
             consecutive_failures += 1
             logging.error(f"Unexpected error: {e}. Reconnecting in {_backoff(consecutive_failures):.0f}s...")

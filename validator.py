@@ -19,7 +19,7 @@ import codoken_config
 # codoken_auth is imported: it captures $CODOKEN_BROKER_WS at import time.
 codoken_config.apply_to_env("validator")
 
-from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError  # noqa: E402
+from codoken_auth import CodokenAuth, CodokenAuthError, CodokenNetworkError, check_for_update  # noqa: E402
 
 # ==========================================
 # 1. Zero-Config Environment Auto-Discovery
@@ -541,7 +541,7 @@ async def validator_client():
 
     auth_store = os.environ.get("CODOKEN_AUTH_STORE", str(Path.home() / ".codoken" / "auth.json"))
     auth = CodokenAuth(ROLE, auth_store=auth_store)
-    _reauthed = False
+    await check_for_update(VERSION)
     consecutive_failures = 0
     while True:
         # Pause file check — user ran `codoken pause`
@@ -632,40 +632,17 @@ async def validator_client():
             print(f"[Validator] Broker unreachable ({type(e).__name__}). Retrying in {delay:.0f}s...")
         except InvalidStatus as e:
             if e.response.status_code in (401, 403):
-                if _reauthed:
-                    print("[Validator] Authentication failed after reauth. Exiting.")
-                    sys.exit(1)
-                print("[Validator] Authentication rejected by broker. Launching re-authentication...")
-                try:
-                    await CodokenAuth.reauth(auth_store=auth_store)
-                    _reauthed = True
-                except CodokenNetworkError as reauth_net_exc:
-                    consecutive_failures += 1
-                    print(f"[Validator] Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
-                except Exception as reauth_exc:
-                    print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
-                    sys.exit(1)
-                consecutive_failures = 0
-                continue
+                print(
+                    "[Validator] Authentication rejected by broker. Credentials may be missing or expired. "
+                    "Run: python codoken_setup.py"
+                )
+                sys.exit(1)
             else:
                 consecutive_failures += 1
                 print(f"[Validator] Broker returned HTTP {e.response.status_code}. Retrying in {_backoff(consecutive_failures):.0f}s...")
         except CodokenAuthError as e:
-            if _reauthed:
-                print(f"[Validator] Authentication failed after reauth: {e}. Exiting.")
-                sys.exit(1)
-            print(f"[Validator] Authentication failed: {e}. Launching re-authentication...")
-            try:
-                await CodokenAuth.reauth(auth_store=auth_store)
-                _reauthed = True
-            except CodokenNetworkError as reauth_net_exc:
-                consecutive_failures += 1
-                print(f"[Validator] Re-authentication skipped ({reauth_net_exc}). Retrying in {_backoff(consecutive_failures):.0f}s...")
-            except Exception as reauth_exc:
-                print(f"[Validator] Re-authentication failed: {reauth_exc}. Exiting.")
-                sys.exit(1)
-            consecutive_failures = 0
-            continue
+            print(f"[Validator] Authentication failed: {e}. Run: python codoken_setup.py")
+            sys.exit(1)
         except Exception as e:
             consecutive_failures += 1
             print(f"[Validator] Unexpected error: {e}. Reconnecting in {_backoff(consecutive_failures):.0f}s...")
