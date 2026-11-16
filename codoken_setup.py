@@ -278,15 +278,14 @@ async def wizard(defaults: bool) -> None:
 
     # -- Role --
     if defaults:
-        role_input = codoken_config.effective("role") or "worker,validator"
+        role_input = codoken_config.effective("role") or "worker,validator,trusted_worker"
     else:
         click.echo("Roles:")
         click.echo("  worker         — your machine runs a local LLM (Ollama, LM Studio, llama.cpp)")
         click.echo("                   and generates code for tasks submitted by developers.")
         click.echo("  validator      — your machine runs sandboxed containers (Docker/Podman)")
         click.echo("                   and independently verifies generated code.")
-        click.echo("  both           — run both roles on this machine (recommended if you have")
-        click.echo("                   both an LLM and a container engine installed).")
+        click.echo("  both           — run all three roles on this machine (default).")
         click.echo("  trusted_worker — share your local LLM with a specific developer who")
         click.echo("                   invited you via codoken.io/trusted  (private, invite-only).\n")
         _cfg_path = codoken_config.config_file()
@@ -300,7 +299,7 @@ async def wizard(defaults: bool) -> None:
             "Role", default=_saved_role,
         ).strip().lower()
         if role_input == "both":
-            role_input = "worker,validator"
+            role_input = "worker,validator,trusted_worker"
 
     roles = {r.strip() for r in role_input.split(",") if r.strip()}
 
