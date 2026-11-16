@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -46,6 +47,74 @@ from typing import Optional
 import click
 
 import codoken_config
+
+# ---------------------------------------------------------------------------
+# Terminal colour / animation helpers
+# ---------------------------------------------------------------------------
+_NO_COLOR = not sys.stdout.isatty() or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb"
+
+def _c(code: str, text: str) -> str:
+    """Wrap text in an ANSI escape if the terminal supports colour."""
+    if _NO_COLOR:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+def _bold(t):    return _c("1",    t)
+def _dim(t):     return _c("2",    t)
+def _purple(t):  return _c("95",   t)
+def _cyan(t):    return _c("96",   t)
+def _green(t):   return _c("92",   t)
+def _yellow(t):  return _c("93",   t)
+def _red(t):     return _c("91",   t)
+def _white(t):   return _c("97",   t)
+def _bg_dark(t): return _c("100",  t)
+
+_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+class Spinner:
+    """Context manager: shows a spinner beside a label until done."""
+    def __init__(self, label: str):
+        self._label = label
+        self._stop  = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self):
+        if _NO_COLOR:
+            click.echo(f"  {self._label}…", nl=False)
+            return self
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+        return self
+
+    def _spin(self):
+        i = 0
+        while not self._stop.is_set():
+            frame = _cyan(_SPINNER_FRAMES[i % len(_SPINNER_FRAMES)])
+            sys.stdout.write(f"\r  {frame} {self._label}…")
+            sys.stdout.flush()
+            time.sleep(0.08)
+            i += 1
+
+    def ok(self, msg: str = ""):
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+        tick = _green("✓")
+        sys.stdout.write(f"\r  {tick} {self._label}  {_green(msg)}\n")
+        sys.stdout.flush()
+
+    def fail(self, msg: str = ""):
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+        cross = _red("✗")
+        sys.stdout.write(f"\r  {cross} {self._label}  {_yellow(msg)}\n")
+        sys.stdout.flush()
+
+    def __exit__(self, *_):
+        if not self._stop.is_set():
+            self.ok()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,10 +133,8 @@ RUNTIME_INFO = [
     ("php",        "php:8.2-cli",                      380,  "PHP 8.2"),
     ("ruby",       "ruby:3.2-slim",                    220,  "Ruby 3.2"),
     ("java",       "eclipse-temurin:21-jdk-alpine",    350,  "Java 21 (Temurin)"),
-    ("gdscript",    "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
-    ("gdscript3",   "barichello/godot-ci:3.6.2",        1610,  "GDScript (Godot 3 headless)"),
-    ("sqlite",      "python:3.12-slim",                  150,  "SQLite (in-memory, Python harness)"),
-    ("postgresql",  "codoken-pg:1.0",                    450,  "PostgreSQL 16 (sandboxed instance)"),
+    ("gdscript",   "barichello/godot-ci:4.3",         2400,  "GDScript (Godot 4 headless)"),
+    ("gdscript3",  "barichello/godot-ci:3.6.2",        1610,  "GDScript (Godot 3 headless)"),
 ]
 
 RUNTIME_IMAGES = [image for _, image, _, _ in RUNTIME_INFO]
@@ -78,10 +145,6 @@ RUNTIME_BUILD_IMAGES = {
     "codoken-ts:latest": {
         "base": "node:18-slim",
         "description": "TypeScript (ts-node pre-installed)",
-    },
-    "codoken-pg:1.0": {
-        "base": "postgres:16-alpine",
-        "description": "PostgreSQL 16 with Python 3 harness runner",
     },
 }
 
@@ -203,27 +266,34 @@ async def _browser_auth() -> dict:
 # Wizard
 # ---------------------------------------------------------------------------
 async def wizard(defaults: bool) -> None:
-    click.echo("\n=== Codoken Setup Wizard ===")
-    click.echo("This wizard configures your Codoken node in about 2 minutes.")
-    click.echo("You can re-run it at any time to change settings.\n")
+    # Header banner
+    w = 62
+    border = _purple("─" * w)
+    click.echo("")
+    click.echo(_purple("┌") + border + _purple("┐"))
+    click.echo(_purple("│") + _bold(_white(f"{'  Codoken Setup Wizard':^{w}}")) + _purple("│"))
+    click.echo(_purple("│") + _dim(f"{'  Configure your node in about 2 minutes':^{w}}") + _purple("│"))
+    click.echo(_purple("└") + border + _purple("┘"))
+    click.echo("")
 
     # -- Role --
     if defaults:
-        role_input = codoken_config.effective("role") or "worker,validator,trusted_worker"
+        role_input = codoken_config.effective("role") or "worker,validator"
     else:
         click.echo("Roles:")
         click.echo("  worker         — your machine runs a local LLM (Ollama, LM Studio, llama.cpp)")
         click.echo("                   and generates code for tasks submitted by developers.")
         click.echo("  validator      — your machine runs sandboxed containers (Docker/Podman)")
         click.echo("                   and independently verifies generated code.")
-        click.echo("  trusted_worker — your machine runs a powerful LLM for developers you trust.")
-        click.echo("                   Tasks route directly to you — no third-party validation.")
-        click.echo("")
-        click.echo("  You can combine roles with commas, e.g. worker,validator")
-        click.echo("  Typical choices: worker · validator · trusted_worker · worker,validator\n")
+        click.echo("  both           — run both roles on this machine (recommended if you have")
+        click.echo("                   both an LLM and a container engine installed).")
+        click.echo("  trusted_worker — share your local LLM with a specific developer who")
+        click.echo("                   invited you via codoken.io/trusted  (private, invite-only).\n")
         role_input = click.prompt(
-            "Role", default="worker,validator,trusted_worker",
+            "Role", default="both",
         ).strip().lower()
+        if role_input == "both":
+            role_input = "worker,validator"
 
     roles = {r.strip() for r in role_input.split(",") if r.strip()}
 
@@ -258,24 +328,17 @@ async def wizard(defaults: bool) -> None:
     from codoken_auth import CodokenAuth, CodokenAuthError
 
     auth_path = USER_CONFIG.parent / "auth.json"
+    # Check for existing credentials and ask the user to confirm or switch.
     if auth_path.exists():
         try:
             stored = json.loads(auth_path.read_text())
             entry = stored.get("developer") or stored.get("worker") or stored.get("validator") or stored.get("trusted_worker")
             if entry and entry.get("refresh_token") and entry.get("uid"):
                 email = entry.get("email", "")
-                if not email and entry.get("id_token"):
-                    try:
-                        import base64 as _b64
-                        payload = entry["id_token"].split(".")[1]
-                        payload += "=" * (-len(payload) % 4)
-                        email = json.loads(_b64.urlsafe_b64decode(payload)).get("email", "")
-                    except Exception:
-                        pass
                 uid_short = entry["uid"][:12]
                 label = email if email else uid_short + "…"
                 click.echo(f"\n  Currently signed in as: {label}")
-                keep = click.confirm("  Keep this account?", default=True)
+                keep = click.confirm(f"  Keep this account?", default=True)
                 if keep:
                     token_data = {
                         "uid": entry["uid"],
@@ -322,12 +385,13 @@ async def wizard(defaults: bool) -> None:
 
     uid_preview = (token_data.get("uid") or "")[:12]
     email_label = token_data.get("email") or token_data.get("uid") or "unknown"
-    click.echo(f"  Signed in as {email_label}  (uid {uid_preview}…)  ✓")
+    click.echo(f"  {_green('✓')} Signed in as {_bold(_white(email_label))}  {_dim('(uid ' + uid_preview + '…)')}")
 
-    # -- Worker: detect LLM backend --
+    # -- Worker / trusted_worker: detect LLM backend --
     doc_model = None
-    if "worker" in roles:
-        click.echo("\n-- Worker: LLM backend --")
+    if "worker" in roles or "trusted_worker" in roles:
+        role_label = "Worker" if "worker" in roles else "Trusted worker"
+        click.echo(f"\n-- {role_label}: LLM backend --")
         click.echo("The worker needs a locally running LLM to generate code.")
         click.echo("Supported: Ollama (port 11434), LM Studio (port 1234), llama.cpp (port 8080).")
         import httpx
@@ -396,83 +460,6 @@ async def wizard(defaults: bool) -> None:
                 "  the worker will detect it automatically."
             )
 
-    # -- Trusted worker: LLM endpoint config --
-    tw_llm_url = ""
-    tw_llm_model = ""
-    tw_llm_label = ""
-    if "trusted_worker" in roles:
-        click.echo("\n-- Trusted Worker: LLM endpoint --")
-        click.echo("The trusted worker calls any OpenAI-compatible endpoint (e.g. Ollama, LM Studio, llama.cpp).")
-        click.echo("Developers who trust you will route tasks directly to this machine.")
-        import httpx as _httpx_tw
-
-        # Probe known backends — same as worker detection
-        TW_ENDPOINTS = {
-            "Ollama":    ("http://localhost:11434", "/api/tags"),
-            "LM Studio": ("http://localhost:1234",  "/v1/models"),
-            "llama.cpp": ("http://localhost:8080",  "/health"),
-        }
-        found_tw = []
-        async with _httpx_tw.AsyncClient(timeout=2) as http:
-            for name, (base, probe) in TW_ENDPOINTS.items():
-                try:
-                    r = await http.get(base + probe)
-                    if r.status_code == 200:
-                        found_tw.append((name, base))
-                except Exception:
-                    pass
-
-        if found_tw:
-            tw_name, tw_base = found_tw[0]
-            click.echo(f"  Found: {', '.join(n for n, _ in found_tw)}  ✓")
-            default_url = tw_base + "/v1"
-        else:
-            tw_name, tw_base = "Ollama", "http://localhost:11434"
-            default_url = "http://localhost:11434/v1"
-
-        tw_llm_url = click.prompt(
-            "  LLM endpoint URL",
-            default=default_url,
-        ).strip()
-
-        # Try to auto-detect the first available model from the chosen endpoint
-        detected_tw_model = ""
-        try:
-            async with _httpx_tw.AsyncClient(timeout=3) as http:
-                if tw_name == "Ollama" and tw_llm_url.startswith(tw_base):
-                    r = await http.get(f"{tw_base}/api/tags")
-                    if r.status_code == 200:
-                        models = r.json().get("models", [])
-                        if models:
-                            detected_tw_model = models[0].get("name") or models[0].get("model", "")
-                else:
-                    r = await http.get(f"{tw_llm_url}/models")
-                    if r.status_code == 200:
-                        data = r.json().get("data", [])
-                        if data:
-                            detected_tw_model = data[0].get("id", "")
-        except Exception:
-            pass
-
-        if detected_tw_model:
-            click.echo(f"  Detected model: {detected_tw_model}")
-            tw_llm_model = click.prompt(
-                "  Model to use (Enter to confirm, or type a different name)",
-                default=detected_tw_model,
-            ).strip()
-        else:
-            tw_llm_model = click.prompt(
-                "  Model name (e.g. qwen3:14b, deepseek-r1:8b)",
-                default="",
-            ).strip()
-
-        tw_llm_label = click.prompt(
-            "  Friendly label shown to developers (e.g. 'Jean's workstation — Qwen3 14B')",
-            default=f"{tw_llm_model or 'unknown model'} on {socket.gethostname()}",
-        ).strip()
-
-        click.echo(f"  Endpoint: {tw_llm_url}  model: {tw_llm_model or '(auto-detect)'}  label: {tw_llm_label}  ✓")
-
     # -- Validator: detect container engine + pick languages + pull images --
     selected_languages: list[str] = []
     if "validator" in roles:
@@ -485,8 +472,7 @@ async def wizard(defaults: bool) -> None:
                 try:
                     subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=5)
                     engine = cmd
-                    rootless_note = _rootless_note(cmd)
-                    click.echo(f"  Found: {cmd}  ✓{rootless_note}")
+                    click.echo(f"  Found: {cmd}  ✓")
                     break
                 except Exception:
                     click.echo(f"  {cmd} is installed but the daemon is not running.")
@@ -649,12 +635,6 @@ async def wizard(defaults: bool) -> None:
         "worker_parallel": "2",
         "worker_model": doc_model or "",
     }
-    if tw_llm_url or tw_llm_model:
-        doc["trusted_worker"] = {
-            "llm_url":   tw_llm_url   or "http://localhost:11434/v1",
-            "model":     tw_llm_model or "",
-            "label":     tw_llm_label or "",
-        }
     if selected_languages:
         all_keys = [lang for lang, _, _, _ in RUNTIME_INFO]
         if sorted(selected_languages) != sorted(all_keys):
@@ -669,21 +649,19 @@ async def wizard(defaults: bool) -> None:
     click.echo(f"  Saved {USER_CONFIG}")
     click.echo("  To change settings later, edit that file or re-run this wizard.")
 
-    # -- Verify broker connection --
-    click.echo("\nVerifying broker connection...")
+    click.echo(f"\n{_bold('Verifying broker connection…')}")
     import httpx
     try:
         async with httpx.AsyncClient(timeout=8) as http:
             r = await http.get(f"{_http_base(BROKER_DEFAULT)}/health")
             body = r.json()
         if body.get("status") == "ok":
-            click.echo(f"  Broker OK — spec {body.get('spec_version')}, "
-                       f"auth={body.get('auth_mode')}  ✓")
+            click.echo(f"  {_green('✓')} Broker OK — spec {body.get('spec_version')}, auth={body.get('auth_mode')}")
         else:
-            click.echo(f"  [WARN] Broker returned unexpected status: {body}")
+            click.echo(f"  {_yellow('⚠')} Broker returned unexpected status: {body}")
     except Exception as exc:
         click.echo(
-            f"  [WARN] Could not reach broker: {exc}\n"
+            f"  {_yellow('⚠')} Could not reach broker: {exc}\n"
             "  Your node will keep retrying. Check your internet connection\n"
             f"  or verify the broker is up:  curl {_http_base(BROKER_DEFAULT)}/health"
         )
@@ -713,56 +691,74 @@ async def wizard(defaults: bool) -> None:
 
     # -- Test broker connection + trigger welcome bonus --
     auth_mode = (os.environ.get("CODOKEN_AUTH") or codoken_config.effective("auth") or "shared_secret").lower()
+    balance = None
     if auth_mode == "firebase":
         click.echo("")
-        click.echo("  Testing broker connection…", nl=False)
-        try:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, _test_broker_connection())
-                balance = future.result(timeout=15)
-            click.echo(f" connected!  Balance: {balance:.2f} CU")
-        except Exception as e:
-            click.echo(f" skipped ({e})")
+        with Spinner("Testing broker connection") as sp:
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, _test_broker_connection())
+                    balance = future.result(timeout=15)
+                sp.ok(f"connected!")
+            except Exception as e:
+                sp.fail(f"skipped ({e})")
 
     # -- Congratulations --
+    w = 62
     click.echo("")
-    click.echo("=" * 60)
+    click.echo(_purple("┌") + _purple("─" * w) + _purple("┐"))
+    click.echo(_purple("│") + _bold(_white(f"{'  🎉  Your node is ready!':^{w}}")) + _purple("│"))
+    click.echo(_purple("└") + _purple("─" * w) + _purple("┘"))
     click.echo("")
-    click.echo("  Congratulations — your node is ready!")
+    click.echo(f"  {_white('Welcome to the Codoken network.')}")
+    click.echo(f"  {_dim('Your machine is now part of a peer-to-peer network of developers')}")
+    click.echo(f"  {_dim('contributing local AI to generate and verify real code.')}")
     click.echo("")
-    click.echo("  Welcome to the Codoken local agent coding community.")
-    click.echo("  Your machine is now part of a peer-to-peer network of")
-    click.echo("  developers and contributors running local AI to generate")
-    click.echo("  and verify real code, earning credits for every task.")
-    click.echo("")
+
+    # Balance box
+    if balance is not None:
+        bal_str = f"{balance:.2f} CU"
+        label   = "Starting balance"
+        bal_col = _green(bal_str) if balance > 0 else _yellow(bal_str)
+        click.echo(_cyan("  ┌─ Account ") + _cyan("─" * (w - 10)) + _cyan("┐"))
+        click.echo(_cyan("  │") + f"  {_dim(label + ':')}  {_bold(bal_col):<{w - 4}}" + _cyan("│"))
+        click.echo(_cyan("  └") + _cyan("─" * w) + _cyan("┘"))
+        click.echo("")
+
+    # Start commands
     if service_installed:
-        click.echo("  Your node will start automatically on login.")
-        click.echo("  Sit back — credits will accumulate while you work.")
+        click.echo(f"  {_green('✓')} Your node starts {_bold('automatically on login')}.")
+        click.echo(f"  {_dim('Sit back — credits accumulate while you work.')}")
     else:
-        click.echo("  Start your node manually when you're ready:")
-        if sys.platform == "win32":
-            set_env = "set CODOKEN_AUTH=firebase &&"
-        else:
-            set_env = "CODOKEN_AUTH=firebase"
-        if "worker" in roles:
-            click.echo(f"    {set_env} python worker.py")
-        if "validator" in roles:
-            click.echo(f"    {set_env} python validator.py")
-        if "trusted_worker" in roles:
-            click.echo(f"    {set_env} python trusted_worker.py")
+        click.echo(f"  {_yellow('▶')} Start your node manually:")
+        set_env = "CODOKEN_AUTH=firebase" if sys.platform != "win32" else "set CODOKEN_AUTH=firebase &&"
+        for role, script in [("worker", "worker.py"), ("validator", "validator.py"), ("trusted_worker", "trusted_worker.py")]:
+            if role in roles:
+                click.echo(f"    {_cyan(set_env + ' python ' + script)}")
     click.echo("")
-    click.echo("  Track your earnings:   https://codoken.io/dashboard.html")
-    click.echo("  Useful commands:")
-    click.echo("    codoken node-status              — show pause state")
-    click.echo("    codoken pause                    — pause until you run resume")
-    click.echo("    codoken pause --until 09:00      — pause until 9 am")
-    click.echo("    codoken resume                   — resume immediately")
-    click.echo("    python codoken_setup.py check    — verify everything")
-    click.echo("    python codoken_setup.py service install  — set up auto-start")
-    click.echo("    python codoken_setup.py          — re-run this wizard")
+
+    # Dashboard link (prominent)
+    dash_url = "https://codoken.io/dashboard.html"
+    click.echo(_cyan("  ┌─ Dashboard ") + _cyan("─" * (w - 13)) + _cyan("┐"))
+    click.echo(_cyan("  │") + f"  {_bold(_white('Track earnings & manage your node:')):<{w - 2}}" + _cyan("│"))
+    click.echo(_cyan("  │") + f"  {_bold(_purple(dash_url)):<{w - 2}}" + _cyan("│"))
+    click.echo(_cyan("  └") + _cyan("─" * w) + _cyan("┘"))
     click.echo("")
-    click.echo("=" * 60)
+
+    # Useful commands
+    click.echo(f"  {_bold('Useful commands:')}")
+    cmds = [
+        ("codoken node-status",                   "show pause/resume state"),
+        ("codoken pause",                          "pause indefinitely"),
+        ("codoken pause --until 09:00",            "pause until 9 am"),
+        ("codoken resume",                         "resume immediately"),
+        ("python codoken_setup.py check",          "verify everything is working"),
+        ("python codoken_setup.py service install","install auto-start service"),
+        ("python codoken_setup.py",                "re-run this wizard"),
+    ]
+    for cmd, desc in cmds:
+        click.echo(f"    {_cyan(cmd):<55}  {_dim(desc)}")
     click.echo("")
 
 
@@ -789,35 +785,6 @@ def codoken_auth_load_web_config():
     return codoken_auth._load_web_config()
 
 
-def _rootless_note(cmd: str) -> str:
-    """Return a short inline note about rootless mode; empty string if nothing to report."""
-    if sys.platform != "linux":
-        return ""
-    if cmd == "podman":
-        # Podman on Linux is rootless by default when run as a non-root user.
-        if os.getuid() != 0:
-            return "  (rootless — recommended)"
-        return "  [WARN: running as root — prefer rootless]"
-    if cmd == "docker":
-        # Check if dockerd is in rootless mode (context name contains 'rootless',
-        # or DOCKER_HOST points to a rootless socket).
-        try:
-            r = subprocess.run(
-                ["docker", "info", "--format", "{{.SecurityOptions}}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "rootless" in r.stdout.lower():
-                return "  (rootless)"
-        except Exception:
-            pass
-        return (
-            "\n  [WARN] Docker is running as root. For better isolation, switch to "
-            "rootless Docker or use Podman instead.\n"
-            "  See: https://docs.docker.com/engine/security/rootless/"
-        )
-    return ""
-
-
 def _engine_install_hint() -> str:
     if sys.platform == "darwin":
         return (
@@ -836,12 +803,11 @@ def _engine_install_hint() -> str:
         )
     else:
         return (
-            "  Linux — recommended: Podman rootless (no root daemon, better isolation):\n"
+            "  Linux — install Podman (rootless, no daemon needed):\n"
             "    Ubuntu/Debian: sudo apt install podman\n"
             "    Fedora/RHEL:   sudo dnf install podman\n"
-            "  Alternative: Docker rootless mode (preferred over standard Docker):\n"
-            "    https://docs.docker.com/engine/security/rootless/\n"
-            "  Avoid standard Docker (daemon runs as root) unless rootless is configured."
+            "  Or Docker:       sudo apt install docker.io && sudo usermod -aG docker $USER\n"
+            "  (log out and back in after adding yourself to the docker group)"
         )
 
 
@@ -884,7 +850,7 @@ async def _service_install(roles: set[str], config: dict) -> None:
             "    1. Open Task Scheduler -> Create Basic Task\n"
             "    2. Trigger: 'When I log on'\n"
             f"    3. Action: Start program -> {_repo_python()}\n"
-            f"       Arguments: worker.py  (or validator.py)\n"
+            f"       Arguments: worker.py  (or validator.py, or trusted_worker.py)\n"
             f"       Start in:  {_repo_dir()}\n"
             "    4. Set CODOKEN_AUTH=firebase in the task's environment\n\n"
             "  Option 2 — NSSM (https://nssm.cc):\n"
@@ -950,7 +916,7 @@ async def _launchd_install(roles: set[str], config: dict) -> None:
     for role in ("worker", "validator", "trusted_worker"):
         if role not in roles:
             continue
-        label = f"dev.codoken.{role.replace('_', '-')}"
+        label = f"dev.codoken.{role}"
         script = str(Path(_repo_dir()) / f"{role}.py")
         log_path = str(log_dir / f"{role}.log")
         plist_path = agents_dir / f"{label}.plist"
@@ -1004,7 +970,7 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
         if role not in roles:
             continue
         script = str(Path(_repo_dir()) / f"{role}.py")
-        unit_path = systemd_dir / f"codoken-{role.replace('_', '-')}.service"
+        unit_path = systemd_dir / f"codoken-{role}.service"
         unit_path.write_text(_systemd_unit(role, script, env))
 
     # Single daemon-reload after writing all units.
@@ -1016,7 +982,7 @@ async def _systemd_install(roles: set[str], config: dict) -> None:
     for role in ("worker", "validator", "trusted_worker"):
         if role not in roles:
             continue
-        svc = f"codoken-{role.replace('_', '-')}.service"
+        svc = f"codoken-{role}.service"
         unit_path = systemd_dir / svc
         try:
             subprocess.run(["systemctl", "--user", "enable", "--now", svc], check=True)
@@ -1041,7 +1007,7 @@ async def _service_uninstall() -> None:
     if sys.platform == "darwin":
         agents_dir = Path.home() / "Library" / "LaunchAgents"
         for role in ("worker", "validator", "trusted_worker"):
-            label = f"dev.codoken.{role.replace('_', '-')}"
+            label = f"dev.codoken.{role}"
             plist = agents_dir / f"{label}.plist"
             if plist.exists():
                 subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
@@ -1049,7 +1015,7 @@ async def _service_uninstall() -> None:
                 click.echo(f"  Removed {label}")
     elif sys.platform.startswith("linux"):
         for role in ("worker", "validator", "trusted_worker"):
-            svc = f"codoken-{role.replace('_', '-')}.service"
+            svc = f"codoken-{role}.service"
             subprocess.run(["systemctl", "--user", "disable", "--now", svc],
                            capture_output=True)
             unit = Path.home() / ".config" / "systemd" / "user" / svc
@@ -1177,33 +1143,6 @@ async def _probe_llm(rep: Report) -> None:
                  "none of ollama :11434 / LM Studio :1234 / llama.cpp :8080 reachable")
 
 
-def _probe_userns(rep: Report, cmd: str) -> None:
-    """Check whether user namespace remapping is active; warn if not (Linux only)."""
-    if sys.platform != "linux":
-        return
-    if cmd == "podman" and os.getuid() != 0:
-        # Rootless Podman always uses user namespaces — nothing to check.
-        rep.ok("user namespaces", "rootless Podman — container root maps to unprivileged host UID")
-        return
-    if cmd == "docker":
-        try:
-            r = subprocess.run(
-                ["docker", "info", "--format", "{{.SecurityOptions}}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "name=userns" in r.stdout.lower():
-                rep.ok("user namespaces", "Docker userns-remap active")
-                return
-        except Exception:
-            pass
-        rep.warn(
-            "user namespaces",
-            "Docker userns-remap not configured — container root = host root on escape.\n"
-            "  Fix: add {\"userns-remap\": \"default\"} to /etc/docker/daemon.json and restart dockerd.\n"
-            "  Or switch to Podman rootless (preferred).",
-        )
-
-
 def _probe_engine(rep: Report) -> None:
     for cmd in ("podman", "docker"):
         if not shutil.which(cmd):
@@ -1211,17 +1150,7 @@ def _probe_engine(rep: Report) -> None:
         # Try subprocess first (works for both podman and docker regardless of socket path)
         try:
             subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=5)
-            note = _rootless_note(cmd).strip()
-            detail = f"{cmd} daemon responds"
-            if note:
-                detail += f"  {note}"
-                if "[WARN" in note:
-                    rep.warn("container engine", detail)
-                else:
-                    rep.ok("container engine", detail)
-            else:
-                rep.ok("container engine", detail)
-            _probe_userns(rep, cmd)
+            rep.ok("container engine", f"{cmd} daemon responds")
             return
         except Exception:
             pass
@@ -1231,7 +1160,6 @@ def _probe_engine(rep: Report) -> None:
             client = docker.from_env()
             client.ping()
             rep.ok("container engine", f"{cmd} daemon responds")
-            _probe_userns(rep, cmd)
             return
         except Exception as exc:  # noqa: BLE001
             rep.warn("container engine",
@@ -1245,8 +1173,9 @@ def _probe_services(rep: Report) -> None:
     """Check installed background services are present, using the right Python, and running."""
     if sys.platform == "darwin":
         labels = {
-            "worker":    "dev.codoken.worker",
-            "validator": "dev.codoken.validator",
+            "worker":         "dev.codoken.worker",
+            "validator":      "dev.codoken.validator",
+            "trusted_worker": "dev.codoken.trusted_worker",
         }
         for role, label in labels.items():
             plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
@@ -1280,7 +1209,7 @@ def _probe_services(rep: Report) -> None:
             except Exception as e:
                 rep.warn(f"service ({role})", f"launchctl check failed: {e}")
     elif sys.platform.startswith("linux"):
-        for role in ("worker", "validator"):
+        for role in ("worker", "validator", "trusted_worker"):
             unit = f"codoken-{role}.service"
             result = subprocess.run(["systemctl", "--user", "is-active", unit],
                                     capture_output=True, text=True)
@@ -1353,7 +1282,7 @@ async def doctor(roles: str, no_network: bool) -> int:
             await _probe_auth(rep, broker_base)
 
     print("node capabilities")
-    if "worker" in role_set:
+    if "worker" in role_set or "trusted_worker" in role_set:
         await _probe_llm(rep)
     if "validator" in role_set:
         _probe_engine(rep)
@@ -1403,8 +1332,8 @@ def main(ctx: click.Context, defaults: bool) -> None:
 
 
 @main.command()
-@click.option("--role", default="worker,validator,developer",
-              help="comma list from: broker,worker,validator,developer")
+@click.option("--role", default="worker,validator,developer,trusted_worker",
+              help="comma list from: broker,worker,validator,developer,trusted_worker")
 @click.option("--no-network", is_flag=True,
               help="skip broker + live auth probes")
 def check(role: str, no_network: bool) -> None:
@@ -1475,7 +1404,7 @@ def service_uninstall() -> None:
 
 @main.command("logs")
 @click.argument("role", required=False, default=None,
-                metavar="[worker|validator|developer]")
+                metavar="[worker|validator|developer|trusted_worker]")
 @click.option("--lines", "-n", default=50, show_default=True,
               help="Number of lines to show (0 = follow live)")
 def logs_cmd(role: str | None, lines: int) -> None:
