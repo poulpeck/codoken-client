@@ -75,16 +75,11 @@ async def _auto_detect_model(base_url: str) -> str:
 
 
 async def _call_llm(prompt: Optional[str], messages_json: Optional[str] = None,
-                   temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> tuple[str, int]:
-    """Call the OpenAI-compatible endpoint; return (content, total_tokens).
-
-    If messages_json is provided it takes precedence over prompt — this is the
-    path used by the HTTP proxy so the full conversation history is preserved.
-    """
+                   temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> tuple[str, int, str]:
+    """Call the OpenAI-compatible endpoint; return (content, total_tokens, model_used)."""
     model = LLM_MODEL or await _auto_detect_model(LLM_URL)
     if not model:
         raise RuntimeError(f"No model configured and auto-detection failed for {LLM_URL}")
-
     if messages_json:
         try:
             messages = json.loads(messages_json)
@@ -111,7 +106,7 @@ async def _call_llm(prompt: Optional[str], messages_json: Optional[str] = None,
     total_tokens = usage.get("total_tokens") or (
         (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
     )
-    return content, total_tokens
+    return content, total_tokens, model
 
 
 async def trusted_worker_session(websocket, auth: CodokenAuth) -> None:
@@ -169,16 +164,17 @@ async def trusted_worker_session(websocket, auth: CodokenAuth) -> None:
                 max_tokens    = message.get("max_tokens")
                 logging.info(f"[trusted] task {task_id} received — calling LLM...")
                 try:
-                    content, total_tokens = await _call_llm(
+                    content, total_tokens, model_used = await _call_llm(
                         prompt, messages_json=messages_json,
                         temperature=temperature, max_tokens=max_tokens,
                     )
-                    logging.info(f"[trusted] task {task_id} done — {total_tokens} tokens")
+                    logging.info(f"[trusted] task {task_id} done — {total_tokens} tokens ({model_used})")
                     await send(json.dumps({
-                        "action":     "trusted_task_completed",
-                        "task_id":    task_id,
-                        "result":     content,
+                        "action":      "trusted_task_completed",
+                        "task_id":     task_id,
+                        "result":      content,
                         "tokens_used": total_tokens,
+                        "model_used":  model_used,
                     }))
                 except Exception as exc:
                     logging.error(f"[trusted] task {task_id} failed: {exc}")
