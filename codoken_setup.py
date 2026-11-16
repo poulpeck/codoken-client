@@ -292,7 +292,12 @@ async def wizard(defaults: bool) -> None:
         _saved_role = "both"
         if _cfg_path and _cfg_path.exists():
             try:
-                _saved_role = json.loads(_cfg_path.read_text()).get("role", "both") or "both"
+                _saved = json.loads(_cfg_path.read_text()).get("role", "") or ""
+                _saved_set = {r.strip() for r in _saved.split(",") if r.strip()}
+                if _saved_set == {"worker", "validator", "trusted_worker"}:
+                    _saved_role = "both"
+                elif _saved:
+                    _saved_role = _saved
             except Exception:
                 pass
         role_input = click.prompt(
