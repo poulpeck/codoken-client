@@ -289,8 +289,9 @@ async def wizard(defaults: bool) -> None:
         click.echo("                   both an LLM and a container engine installed).")
         click.echo("  trusted_worker — share your local LLM with a specific developer who")
         click.echo("                   invited you via codoken.io/trusted  (private, invite-only).\n")
+        _existing_role = codoken_config.effective("role") or "both"
         role_input = click.prompt(
-            "Role", default="both",
+            "Role", default=_existing_role,
         ).strip().lower()
         if role_input == "both":
             role_input = "worker,validator"
