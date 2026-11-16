@@ -389,6 +389,8 @@ async def wizard(defaults: bool) -> None:
 
     # -- Worker / trusted_worker: detect LLM backend --
     doc_model = None
+    doc_tw_label = None
+    doc_tw_url = None
     if "worker" in roles or "trusted_worker" in roles:
         role_label = "Worker" if "worker" in roles else "Trusted worker"
         click.echo(f"\n-- {role_label}: LLM backend --")
@@ -459,6 +461,25 @@ async def wizard(defaults: bool) -> None:
                 "  After installing, load any GGUF model and start the server —\n"
                 "  the worker will detect it automatically."
             )
+
+        # Trusted worker: ask for display label and endpoint URL
+        if "trusted_worker" in roles and not defaults:
+            click.echo(f"\n{_bold('-- Trusted worker: display name --')}")
+            click.echo("  This label is shown to developers who connect to your worker.")
+            click.echo(f"  {_dim('e.g.  Hadrien · Qwen3-27B  or  Alice · RTX 4090')}")
+            default_label = doc_model.split("/")[-1].split(":")[0] if doc_model else ""
+            doc_tw_label = click.prompt(
+                "  Display name", default=default_label or ""
+            ).strip() or default_label
+
+            click.echo(f"\n{_bold('-- Trusted worker: endpoint URL --')}")
+            click.echo("  URL of your local LLM's OpenAI-compatible API.")
+            # Suggest the URL of whichever backend was found
+            default_url = "http://localhost:11434/v1"
+            if found_llm:
+                base, _ = list(ENDPOINTS.values())[list(ENDPOINTS.keys()).index(found_llm[0])]
+                default_url = base + "/v1"
+            doc_tw_url = click.prompt("  Endpoint URL", default=default_url).strip()
 
     # -- Validator: detect container engine + pick languages + pull images --
     selected_languages: list[str] = []
@@ -635,6 +656,12 @@ async def wizard(defaults: bool) -> None:
         "worker_parallel": "2",
         "worker_model": doc_model or "",
     }
+    if "trusted_worker" in roles:
+        doc["trusted_worker"] = {
+            "llm_url":   doc_tw_url   or "http://localhost:11434/v1",
+            "model":     doc_model    or "",
+            "label":     doc_tw_label or "",
+        }
     if selected_languages:
         all_keys = [lang for lang, _, _, _ in RUNTIME_INFO]
         if sorted(selected_languages) != sorted(all_keys):
