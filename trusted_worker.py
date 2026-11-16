@@ -143,6 +143,7 @@ async def trusted_worker_session(websocket, auth: CodokenAuth) -> None:
             "version":        VERSION,
             "model_label":    LLM_LABEL or LLM_MODEL or "unknown",
             "endpoint_label": LLM_URL,
+            "device_label":   LLM_LABEL or socket.gethostname(),
         }))
         logging.info("Registered as trusted worker. Waiting for tasks...")
 
