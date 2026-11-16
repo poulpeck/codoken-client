@@ -285,26 +285,21 @@ async def wizard(defaults: bool) -> None:
         click.echo("                   and generates code for tasks submitted by developers.")
         click.echo("  validator      — your machine runs sandboxed containers (Docker/Podman)")
         click.echo("                   and independently verifies generated code.")
-        click.echo("  both           — run all three roles on this machine (default).")
         click.echo("  trusted_worker — share your local LLM with a specific developer who")
         click.echo("                   invited you via codoken.io/trusted  (private, invite-only).\n")
+        click.echo("  Enter one or more roles separated by commas.\n")
         _cfg_path = codoken_config.config_file()
-        _saved_role = "both"
+        _saved_role = "worker,validator,trusted_worker"
         if _cfg_path and _cfg_path.exists():
             try:
                 _saved = json.loads(_cfg_path.read_text()).get("role", "") or ""
-                _saved_set = {r.strip() for r in _saved.split(",") if r.strip()}
-                if _saved_set == {"worker", "validator", "trusted_worker"}:
-                    _saved_role = "both"
-                elif _saved:
+                if _saved:
                     _saved_role = _saved
             except Exception:
                 pass
         role_input = click.prompt(
             "Role", default=_saved_role,
         ).strip().lower()
-        if role_input == "both":
-            role_input = "worker,validator,trusted_worker"
 
     roles = {r.strip() for r in role_input.split(",") if r.strip()}
 
