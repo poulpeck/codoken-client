@@ -39,9 +39,9 @@ LLM_TIMEOUT_S: float = float(os.environ.get("CODOKEN_LLM_TIMEOUT", "180"))
 
 # Known local endpoints to probe
 ENDPOINTS = {
-    "ollama": {"base": "http://localhost:11434", "test": "/api/tags", "type": "ollama"},
-    "lmstudio": {"base": "http://localhost:1234", "test": "/v1/models", "type": "openai"},
-    "llamacpp": {"base": "http://localhost:8080", "test": "/health", "type": "openai"}
+    "ollama":              {"base": "http://127.0.0.1:11434", "test": "/api/tags",   "type": "ollama"},
+    "lmstudio":            {"base": "http://127.0.0.1:1234",  "test": "/v1/models",  "type": "openai"},
+    "llamacpp/tensorfold": {"base": "http://127.0.0.1:8080",  "test": "/v1/models",  "type": "openai"},
 }
 
 # Low reasoning configuration parameters (low temperature for swift, direct task execution)

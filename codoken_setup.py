@@ -404,9 +404,9 @@ async def wizard(defaults: bool) -> None:
         click.echo("Supported: Ollama (port 11434), LM Studio (port 1234), llama.cpp / TensorFold (port 8080).")
         import httpx
         ENDPOINTS = {
-            "Ollama":               ("http://localhost:11434", "/api/tags"),
-            "LM Studio":            ("http://localhost:1234",  "/v1/models"),
-            "llama.cpp/TensorFold": ("http://localhost:8080",  "/v1/models"),
+            "Ollama":               ("http://127.0.0.1:11434", "/api/tags"),
+            "LM Studio":            ("http://127.0.0.1:1234",  "/v1/models"),
+            "llama.cpp/TensorFold": ("http://127.0.0.1:8080",  "/v1/models"),
         }
         found_llm = []
         async with httpx.AsyncClient(timeout=2) as http:
@@ -496,7 +496,7 @@ async def wizard(defaults: bool) -> None:
             click.echo(f"\n{_bold('-- Trusted worker: endpoint URL --')}")
             click.echo("  URL of your local LLM's OpenAI-compatible API.")
             # Suggest the URL of whichever backend was found
-            default_url = "http://localhost:11434/v1"
+            default_url = "http://127.0.0.1:11434/v1"
             if found_llm:
                 base, _ = list(ENDPOINTS.values())[list(ENDPOINTS.keys()).index(found_llm[0])]
                 default_url = base + "/v1"
@@ -679,7 +679,7 @@ async def wizard(defaults: bool) -> None:
     }
     if "trusted_worker" in roles:
         doc["trusted_worker"] = {
-            "llm_url":   doc_tw_url   or "http://localhost:11434/v1",
+            "llm_url":   doc_tw_url   or "http://127.0.0.1:11434/v1",
             "model":     doc_model    or "",
             "label":     doc_tw_label or "",
         }
@@ -1171,9 +1171,9 @@ async def _probe_llm(rep: Report) -> None:
     import httpx
 
     ENDPOINTS = {
-        "ollama":              ("http://localhost:11434", "/api/tags"),
-        "lmstudio":            ("http://localhost:1234",  "/v1/models"),
-        "llamacpp/tensorfold": ("http://localhost:8080",  "/v1/models"),
+        "ollama":              ("http://127.0.0.1:11434", "/api/tags"),
+        "lmstudio":            ("http://127.0.0.1:1234",  "/v1/models"),
+        "llamacpp/tensorfold": ("http://127.0.0.1:8080",  "/v1/models"),
     }
     found = []
     async with httpx.AsyncClient(timeout=1.5) as http:
