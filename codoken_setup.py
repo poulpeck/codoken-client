@@ -401,12 +401,12 @@ async def wizard(defaults: bool) -> None:
         role_label = "Worker" if "worker" in roles else "Trusted worker"
         click.echo(f"\n-- {role_label}: LLM backend --")
         click.echo("The worker needs a locally running LLM to generate code.")
-        click.echo("Supported: Ollama (port 11434), LM Studio (port 1234), llama.cpp (port 8080).")
+        click.echo("Supported: Ollama (port 11434), LM Studio (port 1234), llama.cpp / TensorFold (port 8080).")
         import httpx
         ENDPOINTS = {
-            "Ollama":    ("http://localhost:11434", "/api/tags"),
-            "LM Studio": ("http://localhost:1234",  "/v1/models"),
-            "llama.cpp": ("http://localhost:8080",  "/health"),
+            "Ollama":               ("http://localhost:11434", "/api/tags"),
+            "LM Studio":            ("http://localhost:1234",  "/v1/models"),
+            "llama.cpp/TensorFold": ("http://localhost:8080",  "/v1/models"),
         }
         found_llm = []
         async with httpx.AsyncClient(timeout=2) as http:
@@ -419,41 +419,55 @@ async def wizard(defaults: bool) -> None:
                     pass
         if found_llm:
             click.echo(f"  Found: {', '.join(found_llm)}  ✓")
-            # Try to auto-detect the first available model from the first backend
-            detected_model = None
-            first_base = list(ENDPOINTS.values())[list(ENDPOINTS.keys()).index(found_llm[0])]
-            try:
-                async with httpx.AsyncClient(timeout=2) as http:
-                    name = found_llm[0]
-                    base, _ = first_base
-                    if name == "Ollama":
-                        r = await http.get(f"{base}/api/tags")
-                        models = r.json().get("models", [])
-                        if models:
-                            detected_model = models[0].get("name") or models[0].get("model")
+            # Collect all available models from all detected backends
+            all_models = []
+            async with httpx.AsyncClient(timeout=2) as http:
+                for name in found_llm:
+                    base, _ = ENDPOINTS[name]
+                    try:
+                        if name == "Ollama":
+                            r = await http.get(f"{base}/api/tags")
+                            for m in r.json().get("models", []):
+                                mid = m.get("name") or m.get("model")
+                                if mid:
+                                    all_models.append((mid, name))
+                        else:
+                            r = await http.get(f"{base}/v1/models")
+                            for m in r.json().get("data", []):
+                                mid = m.get("id")
+                                if mid:
+                                    all_models.append((mid, name))
+                    except Exception:
+                        pass
+
+            if all_models:
+                if len(all_models) == 1:
+                    click.echo(f"  Detected model: {all_models[0][0]}")
+                    confirmed_model = click.prompt(
+                        "  Model to use (Enter to confirm, or type a different name)",
+                        default=all_models[0][0],
+                    ).strip() or all_models[0][0]
+                else:
+                    click.echo("  Available models:")
+                    for i, (mid, backend) in enumerate(all_models, 1):
+                        click.echo(f"    {_cyan(str(i))}.  {mid}  {_dim('(' + backend + ')')}")
+                    click.echo(f"    {_cyan('m')}.  Enter a name manually")
+                    choice = click.prompt(
+                        f"  Pick a model [1-{len(all_models)}/m]",
+                        default="1",
+                    ).strip().lower()
+                    if choice == "m" or choice not in [str(i) for i in range(1, len(all_models) + 1)]:
+                        confirmed_model = click.prompt("  Model name", default="").strip()
                     else:
-                        r = await http.get(f"{base}/v1/models")
-                        data = r.json().get("data", [])
-                        if data:
-                            detected_model = data[0].get("id")
-            except Exception:
-                pass
-            if detected_model:
-                click.echo(f"  Detected model: {detected_model}")
-                confirmed_model = click.prompt(
-                    "  Model to use (Enter to confirm, or type a different name)",
-                    default=detected_model,
-                )
+                        confirmed_model = all_models[int(choice) - 1][0]
             else:
                 click.echo("  Could not auto-detect model name.")
                 confirmed_model = click.prompt(
                     "  Enter the model name your LLM backend is serving",
                     default="",
-                )
-            if confirmed_model.strip():
-                doc_model = confirmed_model.strip()
-            else:
-                doc_model = None
+                ).strip()
+
+            doc_model = confirmed_model or None
         else:
             doc_model = None
             click.echo(
@@ -461,9 +475,10 @@ async def wizard(defaults: bool) -> None:
                 "  The worker will connect to the broker in paused mode and probe\n"
                 "  every 10 s. As soon as an LLM starts it will resume automatically.\n\n"
                 "  Recommended options:\n"
-                "    Ollama      https://ollama.ai          (free, CLI-first)\n"
-                "    LM Studio   https://lmstudio.ai        (free, GUI, easy model download)\n"
-                "    llama.cpp   https://github.com/ggerganov/llama.cpp  (advanced)\n\n"
+                "    Ollama        https://ollama.ai          (free, CLI-first)\n"
+                "    LM Studio     https://lmstudio.ai        (free, GUI, easy model download)\n"
+                "    TensorFold    https://github.com/ashhart/TensorFold  (Apple Silicon / NVIDIA, Zig-native)\n"
+                "    llama.cpp     https://github.com/ggerganov/llama.cpp  (advanced)\n\n"
                 "  After installing, load any GGUF model and start the server —\n"
                 "  the worker will detect it automatically."
             )
@@ -1156,9 +1171,9 @@ async def _probe_llm(rep: Report) -> None:
     import httpx
 
     ENDPOINTS = {
-        "ollama":    ("http://localhost:11434", "/api/tags"),
-        "lmstudio":  ("http://localhost:1234",  "/v1/models"),
-        "llamacpp":  ("http://localhost:8080",  "/health"),
+        "ollama":              ("http://localhost:11434", "/api/tags"),
+        "lmstudio":            ("http://localhost:1234",  "/v1/models"),
+        "llamacpp/tensorfold": ("http://localhost:8080",  "/v1/models"),
     }
     found = []
     async with httpx.AsyncClient(timeout=1.5) as http:
