@@ -200,6 +200,7 @@ RUNTIME_CONFIG = {
         "image": "codoken-pg:1.0",
         "files": ("solution.py",),
         "command": "python3 solution.py",
+        "user": "postgres",
         "mem_limit": "512m",
         "timeout": 60,
         "build": {
@@ -494,6 +495,7 @@ def run_sandboxed_test(client, language: str, generated_code: str, test_code: st
                 read_only=True,
                 tmpfs={"/tmp": "size=128m,mode=1777"},
                 pids_limit=64,
+                **( {"user": config["user"]} if config.get("user") else {} ),
             )
             result = container.wait(timeout=config.get("timeout", 120))
             exit_code = result.get("StatusCode", 0) if isinstance(result, dict) else 0
